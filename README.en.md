@@ -1,0 +1,113 @@
+# pin
+
+Pins globally installed CLIs to a specific Node runtime.
+
+When Volta stopped being maintained, its most useful behaviour went with it: `volta install -g` binds a tool to the Node version you installed it with, so the tool keeps working no matter which project or Node version you switch to. `pin` does only that. Under 1100 lines, no downloader.
+
+Chinese docs: [README.md](README.md)
+
+```
+$ fnm use 14            # this shell is Node 14
+$ ni -v                 # ni still runs on the Node 20 it was pinned to
+```
+
+## Requirements
+
+Go 1.21 or newer, no third-party dependencies. Node comes from whatever version manager you already use (fnm, nvm, mise, asdf, proto, vfox and volta are all recognised); `pin` never downloads anything itself.
+
+```bash
+git clone git@github.com:bigshans/pin.git
+cd pin
+./build.sh install      # builds into ~/.pin/bin/pin and relinks existing shims
+```
+
+Add `~/.pin/bin` (`%USERPROFILE%\.pin\bin` on Windows) to your PATH, ahead of your version manager. `pin` and every pinned command then come from that one directory.
+
+## Usage
+
+```bash
+pin @antfu/ni                 # install and pin using the node currently on PATH
+pin -n 20 @antfu/ni           # pin to Node 20 (20, 20.20 and 20.20.2 all work)
+pin -n 20 cowsay@1.6.0        # package version and runtime together
+pin --install -n 18 cowsay    # Node 18 isn't installed; let the manager do it first
+pin                           # list pinned tools
+pin w ni                      # show what the ni shim actually executes
+pin r cowsay                  # unpin; a bin name works too: pin r cowthink
+pin d                         # check runtimes, entry points and shims
+pin d --fix                   # same, but re-bind stale shims and drop orphans
+pin s                         # relink every shim (after replacing the binary)
+pin v
+```
+
+If the first argument isn't a command it's treated as a package name, so `pin add ...` and `pin @antfu/ni` are the same. Full names also work: `add`, `ls`, `rm`, `which`, `doctor`, `shims`.
+
+## Where the runtime comes from
+
+`pin` doesn't assume a particular version manager. Runtimes are looked up through this table; locations whose environment variable isn't set are skipped, so it doesn't matter which managers you have installed.
+
+| Manager | Version directory | `--install` runs |
+|---|---|---|
+| fnm | `$FNM_DIR/node-versions/*`, `~/scoop/apps/fnm/current/node-versions/*` | `fnm install <ver>` |
+| nvm | `$NVM_DIR/versions/node/*`, `~/.nvm/versions/node/*` | `nvm install <ver>` |
+| mise | `$MISE_DATA_DIR/installs/node/*`, `~/.local/share/mise/installs/node/*` | `mise install node@<ver>` |
+| asdf | `$ASDF_DATA_DIR/installs/nodejs/*`, `~/.asdf/installs/nodejs/*` | `asdf install nodejs <ver>` |
+| proto | `$PROTO_HOME/tools/node/*`, `~/.proto/tools/node/*` | `proto install node@<ver>` |
+| vfox | `~/.vfox/cache/nodejs/v-*` | `vfox install nodejs@<ver>` |
+| volta | `~/.volta/tools/image/node/*` | `volta install node@<ver>` |
+
+If nothing matches, the directory is derived from `exec.LookPath("node")`; `-n <absolute path>` always works as an escape hatch. Supporting a new manager means adding one entry to the `runtimeManagers` table, which also covers discovery, self-healing, fix hints and `--install`.
+
+The resolved node path is written into the shim at install time, so a pin binds a path rather than a version constraint. If that path disappears later (manager upgrade, `fnm uninstall`), the shim looks the recorded version up once more before failing; when it does fail, it prints the command that would fix it.
+
+## How it works
+
+```
+$PIN_HOME (default ~/.pin)
+├── bin/<tool>         hard link to the pin binary; argv[0] decides the role
+├── tools/<tool>.txt   six plain lines: kind, node, entry, tool, version
+├── pkgs/<name>/       where npm install -g --prefix puts the package
+└── pins.json          registry, read only by the CLI, never by a shim
+```
+
+Running a shim does three things: read a couple hundred bytes of text, put the pinned runtime directory at the front of PATH, hand the process over to node. Linux and macOS use `syscall.Exec`, so the shim is replaced rather than forked; Windows has no exec(3) and costs one extra process. Every shim is a hard link to the same binary, so ten commands still occupy one copy on disk.
+
+The runtime goes first on PATH so that the `npm`, `pnpm` and `node` subprocesses a tool spawns use the same version. If you'd rather they follow the project, delete the `prependPath` call in `runShim`.
+
+## Performance
+
+Windows 11, Node 20.20.2, averaged over 20 runs:
+
+| Case | Per run |
+|---|---|
+| `node hello.mjs` | 114.3 ms |
+| Same script through a shim | 126.7 ms |
+
+Of the ~12ms difference, 7 to 8ms is Windows process creation itself (`cmd.exe /c echo` costs about the same) and the rest is Go runtime startup. On Linux the exec path should land at 1 to 2ms, but I don't have a Linux box to measure on.
+
+## Cross-compiling
+
+```bash
+./build.sh          # five targets into dist/, plus SHA256SUMS
+./build.sh install  # build for this machine into $PIN_HOME/bin and relink shims
+```
+
+The binary is about 2.9MB.
+
+## Environment
+
+| Variable | Meaning |
+|---|---|
+| `PIN_HOME` | Install root, defaults to `~/.pin` |
+| `PIN_NODE` | Runtime directory used when `-n` is omitted |
+
+## Known limitations
+
+- No downloading. Either let `--install` hand it to your manager, or install the version yourself first.
+- A native binary shim is executed directly without injecting Node; `.cmd` and `.bat` go through `cmd.exe /c` on Windows.
+- One version per package. For several, `pin r` first; concurrent versions would need a different registry key.
+- On Windows, Ctrl+C relies on a shared console; a child running in its own process group won't be terminated with the parent.
+- Pins store absolute paths, so moving to another machine or architecture means pinning again.
+
+## License
+
+MIT

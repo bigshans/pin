@@ -1,29 +1,51 @@
 # pin
 
-把**全局安装的 CLI 工具**钉在某个 Node runtime 上——Volta 的“包级 pin”语义，只做这一件事。
+把全局安装的 CLI 钉在一个指定的 Node 版本上。
 
-```bash
-pin @antfu/ni                 # 用当前 node 安装并钉住（默认动作 = add）
-pin -n 20 @antfu/ni           # 用 node 20（支持部分版本：20 / 20.20 / 20.20.2）
-pin -n 20 cowsay@1.6.0        # 包版本与 runtime 可同时指定
-pin --install -n 18 cowsay    # runtime 没装就先交给版本管理器安装
-pin                           # 列表（= pin l）
-pin w ni                      # 这个 shim 到底会执行什么
-pin r cowsay                  # 卸载（也可用 bin 名：pin r cowthink）
-pin d                         # 体检
-pin d --fix                   # 体检并修复：重绑失效 shim、清孤儿 shim
-pin s                         # 升级 pin 二进制后重新链接所有 shim
-pin v                         # 版本
+Volta 停维护后，它最有价值的那部分语义没有替代品：`volta install -g` 装的工具会绑定安装时的 Node 版本，之后你切到哪个项目、用哪个 Node，它都照常工作。`pin` 只做这一件事，代码不到 1100 行，不引入任何下载器。
+
+英文文档：[README.en.md](README.en.md)
+
+```
+$ fnm use 14            # 当前 shell 是 Node 14
+$ ni -v                 # ni 仍然用安装时选定的 Node 20 跑
 ```
 
-之后无论 `fnm use 14` 还是 `nvm use 16`，`ni` 始终用安装时选定的 Node 运行。
+## 要求
 
-## runtime 来源（不绑定任何一家）
+Go 1.21 以上，无第三方依赖。Node 由你已有的版本管理器提供（fnm、nvm、mise、asdf、proto、vfox、volta 都可以），`pin` 自己不做下载。
 
-`pin` 既不自带下载器，也不假定你用哪个版本管理器。下面这张表驱动了**目录探测**、
-**自愈**、**修复提示**和 `--install` 的转发：
+```bash
+git clone git@github.com:bigshans/pin.git
+cd pin
+./build.sh install      # 编译到 ~/.pin/bin/pin，并重链已有的 shim
+```
 
-| manager | 版本目录 | `--install` 转发 |
+然后把 `~/.pin/bin`（Windows 是 `%USERPROFILE%\.pin\bin`）加到 PATH 里，位置要在版本管理器之前。之后 `pin` 和所有被钉住的命令都从这个目录来。
+
+## 用法
+
+```bash
+pin @antfu/ni                 # 用当前 PATH 上的 node 安装并钉住
+pin -n 20 @antfu/ni           # 指定 Node 20（20 / 20.20 / 20.20.2 都可以）
+pin -n 20 cowsay@1.6.0        # 同时指定包版本
+pin --install -n 18 cowsay    # 本机没有 Node 18，先交给版本管理器装
+pin                           # 列出已钉住的包
+pin w ni                      # 看 ni 这个 shim 实际会执行什么
+pin r cowsay                  # 卸载，也可以用 bin 名：pin r cowthink
+pin d                         # 检查 runtime、入口文件和 shim 是否都还在
+pin d --fix                   # 检查并修复：重绑失效的 shim，删掉没有归属的 shim
+pin s                         # 重新链接所有 shim（换过 pin 二进制之后要跑）
+pin v
+```
+
+第一个词不是命令时当作包名，所以 `pin add ...`、`pin @antfu/ni` 等价。命令也接受全称：`add`、`ls`、`rm`、`which`、`doctor`、`shims`。
+
+## Node 运行时从哪来
+
+`pin` 不假定你用哪个版本管理器，运行时按下面这张表查找。变量没设置的位置会被跳过，所以装了哪个管理器都不影响结果。
+
+| 管理器 | 版本目录 | `--install` 转发为 |
 |---|---|---|
 | fnm | `$FNM_DIR/node-versions/*`、`~/scoop/apps/fnm/current/node-versions/*` | `fnm install <ver>` |
 | nvm | `$NVM_DIR/versions/node/*`、`~/.nvm/versions/node/*` | `nvm install <ver>` |
@@ -33,64 +55,59 @@ pin v                         # 版本
 | vfox | `~/.vfox/cache/nodejs/v-*` | `vfox install nodejs@<ver>` |
 | volta | `~/.volta/tools/image/node/*` | `volta install node@<ver>` |
 
-找不到时再退化到 `exec.LookPath("node")` 推导；`-n <目录>` 永远可以用绝对路径兜底。
-管理器表里加一行即可支持新的管理器。
+都找不到时退回 `exec.LookPath("node")` 推导目录，`-n <绝对路径>` 随时可以兜底。要支持新的管理器，往 `runtimeManagers` 表里加一项即可，探测、自愈、提示和 `--install` 会一起生效。
 
-## 设计
+安装时把解析出的 node 路径写死进 shim，所以绑定的是路径而不是版本约束。路径失效时（管理器升级、`fnm uninstall`），shim 会按记录的版本号重新查找一次再执行；找不到才报错，并给出对应的安装命令。
+
+## 工作原理
 
 ```
 $PIN_HOME (默认 ~/.pin)
-├── bin/<tool>        ← 本可执行文件的硬链接（失败则复制），靠 argv[0] 分发
-├── tools/<tool>.txt  ← 5 行纯文本：kind/node/entry/tool
-├── pkgs/<name>/      ← npm install -g --prefix 的目标
-└── pins.json         ← 注册表，只有 CLI 读，shim 从不解析
+├── bin/<tool>         指向 pin 二进制的硬链接，靠 argv[0] 判断自己是谁
+├── tools/<tool>.txt   6 行纯文本：kind、node、入口、所属包、版本标签
+├── pkgs/<name>/       npm install -g --prefix 的安装目录
+└── pins.json          注册表，只有 CLI 读，shim 不读
 ```
 
-- **shim 不解析 JSON**：热路径只读一个 ~200 字节的文本文件，然后 exec。
-- **Linux/macOS 用 `syscall.Exec`**：进程被直接替换，shim 自身零额外开销。
-- **Windows 用 `CreateProcess`**：无 exec(2)，多一个进程，约 8–12ms。
-- **所有 shim 是同一个 inode 的硬链接**：8 个命令只占一份 3MB。
-- **绝对路径**：node 与入口文件都在安装时写死，与当前 shell 的版本管理器无关。
-- **PATH 注入**：只把**被钉住的 runtime 目录**放到 PATH 最前，因此工具派生出的
-  `npm/pnpm/yarn`、`node` 子进程也使用同一版本。要“用项目的包管理器”的话，删掉
-  `runShim` 里的 `prependPath` 一行即可。
+shim 的执行路径只做三件事：读一个两百来字节的文本文件，把钉住的 runtime 目录放到 PATH 最前，然后把进程交给 node。Linux 和 macOS 用 `syscall.Exec` 直接替换进程，Windows 没有 exec(3)，只能多起一个子进程。所有 shim 是同一个二进制文件的硬链接，十个命令也只占一份磁盘。
 
-## 构建
+把 runtime 目录放到 PATH 最前是为了让工具自己拉起的 `npm`、`pnpm`、`node` 子进程用同一个版本。如果你更希望它们跟随项目，删掉 `runShim` 里的 `prependPath` 那一行就行。
 
-需要 Go 1.21+，无第三方依赖。
+## 性能
 
-```bash
-./build.sh install   # 本机编译 → $PIN_HOME/bin/pin(.exe)，并自动 pin s 重链 shim
-./build.sh           # 交叉编译五个目标到 dist/ + SHA256SUMS
-```
+Windows 11，Node 20.20.2，各跑 20 次取均值：
 
-产物约 2.9MB（windows/amd64），Linux 约 2.9MB。
-
-## 实测（Windows 11, node 20.20.2, 20 次取均值）
-
-| 场景 | 单次耗时 |
+| 场景 | 单次 |
 |---|---|
 | `node hello.mjs` | 114.3 ms |
-| 经 shim 执行同一脚本 | 126.7 ms |
-| **shim 开销** | **≈12.4 ms** |
+| 经 shim 执行同一个脚本 | 126.7 ms |
 
-其中约 7–8ms 是 Windows 进程创建本身（`cmd.exe /c echo` 同量级），剩余是 Go 运行时启动。
-Linux 上因为用 `exec` 替换进程，预期 1–2ms（本机无 Linux 环境，未实测）。
+多出来的约 12ms 里，7 到 8ms 是 Windows 创建进程本身的开销（`cmd.exe /c echo` 也是这个量级），其余是 Go 运行时的启动。Linux 上因为用 exec 替换进程，预期在 1 到 2ms，但我手边没有 Linux 环境，没实测过。
+
+## 跨平台编译
+
+```bash
+./build.sh          # dist/ 下五个目标 + SHA256SUMS
+./build.sh install  # 只编译本机，直接装进 $PIN_HOME/bin 并重链 shim
+```
+
+产物约 2.9MB。
 
 ## 环境变量
 
 | 变量 | 作用 |
 |---|---|
 | `PIN_HOME` | 安装根目录，默认 `~/.pin` |
-| `PIN_NODE` | 省略 `-n` 时的默认 runtime 目录 |
+| `PIN_NODE` | 省略 `-n` 时使用的 runtime 目录 |
 
-`-n` 既接受目录，也接受版本号（`20`、`20.20`、`20.20.2`、`v20.20.2`），会按最新匹配在
-fnm / nvm / mise / asdf / proto / volta / vfox 的默认安装位置里查找。
+## 已知限制
 
-## 限制
+- 不下载 Node。缺版本要么用 `--install` 交给版本管理器，要么自己装好再用。
+- `bin` 是原生二进制时直接执行，不注入 Node；`.cmd` / `.bat` 在 Windows 上走 `cmd.exe /c`。
+- 同一个包只能钉一个版本，需要多版本共存得先 `pin r` 再装。
+- Windows 下 Ctrl+C 依赖共享控制台，子进程在独立进程中运行时不会跟父进程一起终止。
+- 换机器或换系统架构要重新 `pin`，因为存的是绝对路径。
 
-- 不做下载：runtime 必须已经由 fnm/nvm/mise 等装好（这是刻意的，避免重造一遍 Volta 的坑）。
-- 带 native 扩展的工具固定 runtime 即可免疫 ABI 问题，但换机器/换 OS 需要重装。
-- `bin` 指向非 JS（原生二进制）时按 direct 执行；`.cmd/.bat` 在 Windows 上经 `cmd.exe /c`。
-- Windows 的 `ctrl+c` 依赖共享控制台；子进程被独立创建（无 job object）时不会被一并终止。
-- 不支持同一包多版本并存（`pin rm` 后再装即可；多版本并存需要改 registry 主键）。
+## License
+
+MIT
