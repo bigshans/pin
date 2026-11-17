@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // version is overridden at build time with -X main.version.
@@ -1003,13 +1004,16 @@ func cmdAdd(args []string) int {
 			Bins:     names,
 			PM:       pm,
 		}
+		// Record each package as it lands. Installing several at once and failing
+		// on the last one used to leave the earlier ones upgraded on disk while
+		// the registry still described the old versions.
+		if err := saveDB(db); err != nil {
+			fmt.Fprintln(os.Stderr, "pin:", err)
+			return 1
+		}
 		fmt.Printf("  pinned %s@%s → %s\n", pkgName, meta.Version, strings.Join(names, ", "))
 	}
 
-	if err := saveDB(db); err != nil {
-		fmt.Fprintln(os.Stderr, "pin:", err)
-		return 1
-	}
 	fmt.Printf("PATH hint: %s\n", binDir())
 	return 0
 }
@@ -1055,16 +1059,36 @@ func makeShim(bin string) error {
 		return err
 	}
 	dst := filepath.Join(binDir(), bin+exeSuffix())
-	_ = os.Remove(dst)
-	if err := os.Link(self, dst); err == nil {
-		return nil
+
+	// A freshly replaced binary is briefly locked on Windows — antivirus, the
+	// search indexer, or another shell running the shim. Retrying turns "the
+	// process cannot access the file" into a non-event instead of a failed
+	// install that leaves the package half done.
+	var last error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+		}
+		if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
+			last = err
+			continue
+		}
+		if err := os.Link(self, dst); err == nil {
+			return nil
+		} else {
+			last = err
+		}
 	}
-	// Cross-device or FS without hard links.
+
+	// Cross-device or a filesystem without hard links: copy instead.
 	b, err := os.ReadFile(self)
 	if err != nil {
-		return err
+		return last
 	}
-	return os.WriteFile(dst, b, 0o755)
+	if err := writeFileAtomic(dst, b, 0o755); err != nil {
+		return fmt.Errorf("%w (is %s still running?)", err, bin)
+	}
+	return nil
 }
 
 func cmdList() int {
