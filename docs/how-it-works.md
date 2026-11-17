@@ -1,5 +1,7 @@
 # How pin works
 
+[中文](how-it-works.zh.md) · [README](../README.md)
+
 The short version: one small Go binary, hard-linked under the name of every
 pinned command, which reads six lines of text and hands the process over to node.
 

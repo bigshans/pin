@@ -1,5 +1,7 @@
 # Build
 
+[中文](build.zh.md) · [README](../README.md)
+
 Go 1.21 or newer, no third-party dependencies.
 
 ```bash

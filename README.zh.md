@@ -14,7 +14,7 @@ $ fnm use 14          # 当前 shell 是 Node 14
 $ ni -v               # ni 仍然用安装时选定的 Node 20 跑
 ```
 
-[English](README.md) · [工作原理](docs/how-it-works.md)（英文） · [构建](docs/build.md)（英文）
+[English](README.md) · [工作原理](docs/how-it-works.zh.md) · [构建](docs/build.zh.md)
 
 ## 安装
 
@@ -33,7 +33,7 @@ chmod +x ~/.local/bin/pin
 export PATH="$HOME/.pin/bin:$PATH"      # Windows: %USERPROFILE%\.pin\bin
 ```
 
-从源码编译：`./build.sh install` —— 见[构建](docs/build.md)。
+从源码编译：`./build.sh install` —— 见[构建](docs/build.zh.md)。
 
 Node 由你已有的版本管理器提供（fnm、nvm、mise、asdf、proto、vfox、volta 都认），`pin` 自己不做下载。
 
@@ -70,14 +70,14 @@ eval "$(pin completion bash)"    # 写进 ~/.bashrc
 pin completion fish | source     # 写进 ~/.config/fish/config.fish
 ```
 
-也可以把生成的文件丢进各 shell 自己会扫的目录 —— [细节](docs/how-it-works.md#completion)（英文）。
+也可以把生成的文件丢进各 shell 自己会扫的目录 —— [细节](docs/how-it-works.zh.md#补全)。
 
 ## 文档
 
 | | |
 |---|---|
-| [工作原理](docs/how-it-works.md) | shim 布局、运行时解析、PATH 规则、性能、已知限制（英文） |
-| [构建](docs/build.md) | 从源码编译、交叉编译、发布产物（英文） |
+| [工作原理](docs/how-it-works.zh.md) | shim 布局、运行时解析、PATH 规则、性能、已知限制 |
+| [构建](docs/build.zh.md) | 从源码编译、交叉编译、发布产物 |
 | [English](README.md) | English docs |
 
 MIT · 本体约 2200 行 Go，单个二进制，无下载器，无后台进程。

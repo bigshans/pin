@@ -87,6 +87,6 @@ Or drop the generated file where the shell already looks —
 |---|---|
 | [How it works](docs/how-it-works.md) | shim layout, runtime resolution, PATH rules, performance, limits |
 | [Build](docs/build.md) | from source, cross-compilation, release artifacts |
-| [中文](README.zh.md) | 中文文档 |
+| [中文](README.zh.md) | 中文 README，以及[工作原理](docs/how-it-works.zh.md)、[构建](docs/build.zh.md) |
 
 MIT · the thing itself is ~2200 lines of Go, one binary, no downloader, no daemon.
