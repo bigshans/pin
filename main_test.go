@@ -54,3 +54,32 @@ func TestShimFileCorrupt(t *testing.T) {
 		t.Fatal("expected a corrupt shim to be rejected")
 	}
 }
+
+func TestKeyHolder(t *testing.T) {
+	db := map[string]Entry{
+		"cli":       {Spec: "@a/cli@1.0.0"},
+		"ni":        {Spec: "@antfu/ni"},
+		"other-key": {Spec: "plain"},
+	}
+	cases := []struct {
+		name   string
+		seen   map[string]string
+		held   string
+		clash  bool
+		reason string
+	}{
+		{"@b/cli", nil, "@a/cli", true, "another scope, same last segment"},
+		{"cli", nil, "@a/cli", true, "unscoped collides with a scope"},
+		{"@a/cli", nil, "", false, "same package again: an upgrade"},
+		{"@antfu/ni", nil, "", false, "same package again: an upgrade"},
+		{"brand/new", nil, "", false, "free key"},
+		{"plain", map[string]string{"other-key": "plain"}, "", false, "same package twice in one command"},
+		{"@x/other-key", map[string]string{"other-key": "@y/other-key"}, "@y/other-key", true, "two scopes in one command"},
+	}
+	for _, c := range cases {
+		held, clash := keyHolder(db, c.seen, c.name)
+		if clash != c.clash || held != c.held {
+			t.Errorf("%s: got (%q, %v), want (%q, %v) — %s", c.name, held, clash, c.held, c.clash, c.reason)
+		}
+	}
+}

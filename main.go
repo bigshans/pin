@@ -352,6 +352,23 @@ func toolKey(name string) string {
 	return name
 }
 
+// keyHolder reports which package already owns name's key: one already in the
+// registry, or an earlier package in the same command. Both the install
+// directory and the registry key are the last path segment, so @a/cli and
+// @b/cli collide there even though npm treats them as different packages.
+func keyHolder(db map[string]Entry, seen map[string]string, name string) (string, bool) {
+	key := toolKey(name)
+	if other, ok := seen[key]; ok && other != name {
+		return other, true
+	}
+	if e, ok := db[key]; ok {
+		if prev, _ := splitSpec(e.Spec); prev != name {
+			return prev, true
+		}
+	}
+	return "", false
+}
+
 // ---------- runtime resolution ----------
 
 func findNode(dir string) (string, error) {
@@ -755,6 +772,20 @@ func cmdAdd(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pin:", err)
 		return 1
+	}
+
+	// Check every spec before touching the disk. The directory and the registry
+	// key both come from the last path segment, so @a/cli and @b/cli would share
+	// them: installing the second would overwrite the first's entry, and `pin r`
+	// would then delete both sets of files under it.
+	seen := map[string]string{}
+	for _, spec := range specs {
+		pkgName, _ := splitSpec(spec)
+		if held, ok := keyHolder(db, seen, pkgName); ok {
+			fmt.Fprintf(os.Stderr, "pin: %q is already taken by %s; pin r %s first, or pin a different package\n", toolKey(pkgName), held, toolKey(pkgName))
+			return 1
+		}
+		seen[toolKey(pkgName)] = pkgName
 	}
 
 	for _, spec := range specs {

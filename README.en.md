@@ -144,7 +144,7 @@ The binary is about 2.9MB.
 
 - No downloading. Either let `--install` hand it to your manager, or install the version yourself first.
 - A native binary shim is executed directly without injecting Node; `.cmd` and `.bat` go through `cmd.exe /c` on Windows.
-- One version per package. For several, `pin r` first; concurrent versions would need a different registry key.
+- One version per package. For several, `pin r` first; concurrent versions would need a different registry key. The install directory and the registry key are the last path segment of the package name, so `@a/cli` and `@b/cli` cannot coexist either — the second is refused instead of quietly replacing the first.
 - On Windows, Ctrl+C is broadcast by the shared console to the tool and the process tree it spawned; the shim neither swallows it nor exits first, it just waits for the tool to finish. If the tool detached itself into its own process group (`detached: true`) the broadcast never arrives, so it is killed after a 5 second grace and the shim exits 130; a second Ctrl+C skips the wait. Closing the terminal window or ending pin in Task Manager takes the tool and everything it spawned with it — that is the job object's doing, and it needs no code of ours to run.
 - Pins store absolute paths, so moving to another machine or architecture means pinning again.
 
