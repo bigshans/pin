@@ -2,7 +2,7 @@
 
 把全局安装的 CLI 钉在一个指定的 Node 版本上。
 
-Volta 停维护后，它最有价值的那部分语义没有替代品：`volta install -g` 装的工具会绑定安装时的 Node 版本，之后你切到哪个项目、用哪个 Node，它都照常工作。`pin` 只做这一件事，代码 2200 行，不引入任何下载器。
+`npm install -g` 装的工具跟着 PATH 上的 node 走，所以在多版本项目之间切来切去时，它们会换一个 Node 重新跑。Volta 的 `volta install -g` 换了个做法：把工具绑定到安装时选定的 Node 版本，之后你切到哪个项目、用哪个 Node，它都照常工作。Volta 停维护后这个语义没有替代品，`pin` 就只做这一件事 —— 代码 2200 行，不引入任何下载器。
 
 英文文档：[README.en.md](README.en.md)
 

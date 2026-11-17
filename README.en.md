@@ -2,7 +2,7 @@
 
 Pins globally installed CLIs to a specific Node runtime.
 
-When Volta stopped being maintained, its most useful behaviour went with it: `volta install -g` binds a tool to the Node version you installed it with, so the tool keeps working no matter which project or Node version you switch to. `pin` does only that. Around 2200 lines, no downloader.
+A tool installed with `npm install -g` follows whatever node is on PATH, so moving between projects with different Node versions moves the tool with them. Volta's `volta install -g` did it differently: it bound the tool to the Node version it was installed with, so the tool kept working no matter which project or Node version you switched to. That binding has no replacement since Volta stopped being maintained, and `pin` does only that — around 2200 lines, no downloader.
 
 Chinese docs: [README.md](README.md)
 
