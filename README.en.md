@@ -106,7 +106,7 @@ $PIN_HOME (default ~/.pin)
 └── pins.json          registry, read only by the CLI, never by a shim
 ```
 
-Running a shim does three things: read a couple hundred bytes of text, append the pinned runtime directory to PATH, hand the process over to node. Linux and macOS use `syscall.Exec`, so the shim is replaced rather than forked; Windows has no exec(3) and costs one extra process. Every shim is a hard link to the same binary, so ten commands still occupy one copy on disk.
+Running a shim does three things: read a couple hundred bytes of text, append the pinned runtime directory to PATH, hand the process over to node. Linux and macOS use `syscall.Exec`, so the shim is replaced rather than forked; Windows has no exec(3) and costs one extra process — which is put in a job object, so it and everything it spawns live and die with the shim. Every shim is a hard link to the same binary, so ten commands still occupy one copy on disk.
 
 The entry file is always executed through the absolute pinned runtime path, so "`ni` runs on Node 20" holds regardless of PATH. Child processes are a different matter: forwarders such as `ni`, `nr` and `npm run` just hand the work to the project's own package manager, so a `node`/`npm` already on PATH (whichever version the shell's manager selected) has to win. Otherwise `nr test` inside a Node 14 repo would run the suite on Node 20. Hence the runtime directory is appended to PATH, serving only as a fallback when no node is on PATH at all.
 
@@ -145,7 +145,7 @@ The binary is about 2.9MB.
 - No downloading. Either let `--install` hand it to your manager, or install the version yourself first.
 - A native binary shim is executed directly without injecting Node; `.cmd` and `.bat` go through `cmd.exe /c` on Windows.
 - One version per package. For several, `pin r` first; concurrent versions would need a different registry key.
-- On Windows, Ctrl+C is broadcast by the shared console to the tool and the process tree it spawned; the shim neither swallows it nor exits first, it just waits for the tool to finish. If the tool detached itself into its own process group (`detached: true`) the broadcast never arrives, so it gets `taskkill /T` after a 5 second grace and the shim exits 130. A second Ctrl+C skips the wait.
+- On Windows, Ctrl+C is broadcast by the shared console to the tool and the process tree it spawned; the shim neither swallows it nor exits first, it just waits for the tool to finish. If the tool detached itself into its own process group (`detached: true`) the broadcast never arrives, so it is killed after a 5 second grace and the shim exits 130; a second Ctrl+C skips the wait. Closing the terminal window or ending pin in Task Manager takes the tool and everything it spawned with it — that is the job object's doing, and it needs no code of ours to run.
 - Pins store absolute paths, so moving to another machine or architecture means pinning again.
 
 ## License

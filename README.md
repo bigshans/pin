@@ -106,7 +106,7 @@ $PIN_HOME (默认 ~/.pin)
 └── pins.json          注册表，只有 CLI 读，shim 不读
 ```
 
-shim 的执行路径只做三件事：读一个两百来字节的文本文件，把钉住的 runtime 目录挂到 PATH 末尾，然后把进程交给 node。Linux 和 macOS 用 `syscall.Exec` 直接替换进程，Windows 没有 exec(3)，只能多起一个子进程。所有 shim 是同一个二进制文件的硬链接，十个命令也只占一份磁盘。
+shim 的执行路径只做三件事：读一个两百来字节的文本文件，把钉住的 runtime 目录挂到 PATH 末尾，然后把进程交给 node。Linux 和 macOS 用 `syscall.Exec` 直接替换进程，Windows 没有 exec(3)，只能多起一个子进程；那个子进程会被放进一个 job object，于是它和它派生的一切都跟 shim 同生共死。所有 shim 是同一个二进制文件的硬链接，十个命令也只占一份磁盘。
 
 入口文件始终用绝对路径的钉住 runtime 跑，所以「`ni` 一定跑在 Node 20 上」这件事不受 PATH 影响。子进程是另一回事：`ni`、`nr`、`npm run` 这类转发器只是把活交给项目自己的包管理器，PATH 上已有的 `node`/`npm`（版本管理器按 shell 切好的那个）必须优先，否则在 Node 14 的仓库里 `nr test` 会用 Node 20 跑测试。所以 runtime 目录是追加到 PATH 末尾的，只在 PATH 上完全没有 node 时兜底。
 
@@ -145,7 +145,7 @@ Windows 11，Node 20.20.2，各跑 20 次取均值：
 - 不下载 Node。缺版本要么用 `--install` 交给版本管理器，要么自己装好再用。
 - `bin` 是原生二进制时直接执行，不注入 Node；`.cmd` / `.bat` 在 Windows 上走 `cmd.exe /c`。
 - 同一个包只能钉一个版本，需要多版本共存得先 `pin r` 再装。
-- Windows 上 Ctrl+C 由共享控制台广播给工具及其子进程树，shim 自己不吞这个信号、也不抢先退出，只等它收尾。工具如果自己把自己放进了独立进程组（`detached: true`），收不到广播，那就等 5 秒后被 `taskkill /T` 强杀，shim 以 130 退出。再按一次 Ctrl+C 跳过等待。
+- Windows 上 Ctrl+C 由共享控制台广播给工具及其子进程树，shim 自己不吞这个信号、也不抢先退出，只等它收尾。工具如果自己把自己放进了独立进程组（`detached: true`），收不到广播，那就等 5 秒后被强杀，shim 以 130 退出；再按一次 Ctrl+C 跳过等待。关掉终端窗口或在任务管理器里结束 pin 时，工具连同它派生的进程会一起死——这由 job object 保证，不依赖 pin 自己还能执行代码。
 - 换机器或换系统架构要重新 `pin`，因为存的是绝对路径。
 
 ## License

@@ -3,39 +3,26 @@
 package main
 
 import (
-	"errors"
+	"fmt"
 	"os"
 	"syscall"
 	"unsafe"
 )
 
 // A job object is how Windows expresses "this process and everything it
-// spawns". Joining one is the only reliable way to kill a console tool
-// *together with its grandchildren* — pin -> node(ni) -> cmd.exe(npm) ->
-// node(script) is a four deep chain, and killing the first process leaves the
-// rest alive.
+// spawns". It is the only reliable way to kill a console tool *together with
+// its grandchildren*: pin -> node(ni) -> cmd.exe(npm) -> node(script) is a four
+// deep chain, and Ctrl+C only reaches it because the console broadcasts, which
+// stops being true the moment pin itself is killed first.
 //
-// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE makes it unconditional: when the last
-// handle to the job closes, every process in it dies. That covers the cases we
-// cannot handle in Go at all — the user closes the terminal window, or pin
-// itself is killed with Task Manager — because Windows closes our handles for
-// us on the way out.
+// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE covers exactly that gap: when the last
+// handle to the job closes, every process in it dies. Closing the terminal
+// window or killing pin from Task Manager looks, from inside Go, like nothing
+// at all — Windows closes our handles on the way out, and the kernel takes it
+// from there.
 //
-// Everything below is left to you. Nothing outside this file needs to change:
-// exec_windows.go already creates a job before spawning the tool, assigns the
-// child immediately after Start, and falls back to `taskkill /T /F` when
-// newKillOnCloseJob reports an error.
-//
-// Win32 entry points, all in kernel32.dll (do not add a dependency on
-// golang.org/x/sys/windows — this project has none):
-//
-//	CreateJobObjectW(nil, nil)                       -> (handle, errno)
-//	SetInformationJobObject(job, 9, &info, size)     -> (BOOL, errno)
-//	AssignProcessToJobObject(job, processHandle)     -> (BOOL, errno)
-//	TerminateJobObject(job, 1)                       -> (BOOL, errno)
-//	CloseHandle(handle)
-//
-// plus syscall.OpenProcess / syscall.CloseHandle, already in the stdlib.
+// kernel32 is reached through syscall.NewLazyDLL rather than
+// golang.org/x/sys/windows: this project has no dependencies.
 //
 // The structure passed to SetInformationJobObject is
 // JOBOBJECT_EXTENDED_LIMIT_INFORMATION (class 9). In C it is laid out as:
@@ -56,9 +43,8 @@ import (
 //	SIZE_T PeakProcessMemoryUsed;                // uintptr
 //	SIZE_T PeakJobMemoryUsed;                    // uintptr
 //
-// 144 bytes total on amd64. Go's alignment rules match C here as long as you
-// keep the field order and use the widths above — but do not trust that, run
-// the test.
+// 144 bytes on 64-bit. Go's padding happens to match MSVC's here, but keep the
+// assertion below: it is what holds the struct to that claim.
 type job struct {
 	h uintptr
 }
@@ -121,29 +107,51 @@ type extendedLimitInformation struct {
 var _ [144 - int(unsafe.Sizeof(extendedLimitInformation{}))]byte
 var _ [int(unsafe.Sizeof(extendedLimitInformation{})) - 144]byte
 
-var errJobUnsupported = errors.New("job objects are not implemented yet")
-
 // newKillOnCloseJob creates an unnamed job with KILL_ON_JOB_CLOSE set.
 func newKillOnCloseJob() (*job, error) {
-	return nil, errJobUnsupported
+	h, _, err := procCreateJobObjectW.Call(0, 0)
+	if h == 0 {
+		return nil, fmt.Errorf("CreateJobObject: %w", err)
+	}
+	info := extendedLimitInformation{}
+	info.BasicLimitInformation.LimitFlags = jobObjectLimitKillOnJobClose
+	r, _, err := procSetInformationJobObject.Call(h, jobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&info)), unsafe.Sizeof(info))
+	if r == 0 {
+		procCloseHandle.Call(h)
+		return nil, fmt.Errorf("SetInformationJobObject: %w", err)
+	}
+	return &job{h: h}, nil
 }
 
 // assign puts p — and every process p spawns from now on — into the job.
 //
-// Timing is the interesting part. A process created before the assignment is
-// not in the job, so this has to run as soon as Start returns: the window is
-// the time the child needs to boot and spawn children of its own, which is
-// tens of milliseconds for node and effectively zero for cmd.exe. There is no
-// way to close it completely through os/exec (a fully correct implementation
-// would start the child with CREATE_SUSPENDED, assign, then ResumeThread, and
-// os/exec does not expose the thread handle). Write down what you chose.
+// Timing is the interesting part: a process created before the assignment is
+// not in the job, so this runs as soon as Start returns. The remaining window
+// is however long the child needs to spawn children of its own — tens of
+// milliseconds for node, effectively zero for cmd.exe. It is accepted rather
+// than closed: closing it needs the thread handle from CREATE_SUSPENDED, which
+// os/exec does not expose, and the only tool that would benefit is one that
+// forks within microseconds of being exec'd.
 func (j *job) assign(p *os.Process) error {
-	return errJobUnsupported
+	h, err := syscall.OpenProcess(processSetQuota|processTerminate, false, uint32(p.Pid))
+	if err != nil {
+		return err
+	}
+	defer syscall.CloseHandle(h)
+	r, _, err := procAssignProcessToJobObject.Call(j.h, uintptr(h))
+	if r == 0 {
+		return fmt.Errorf("AssignProcessToJobObject: %w", err)
+	}
+	return nil
 }
 
 // terminate kills every process in the job.
 func (j *job) terminate() error {
-	return errJobUnsupported
+	r, _, err := procTerminateJobObject.Call(j.h, 1)
+	if r == 0 {
+		return fmt.Errorf("TerminateJobObject: %w", err)
+	}
+	return nil
 }
 
 // close releases the handle. The processes are already gone by then; if any

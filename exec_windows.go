@@ -3,11 +3,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
-	"syscall"
 	"time"
 )
 
@@ -46,7 +45,7 @@ func runArgv(argv []string, env []string) int {
 
 	// Create the job before the child exists; a process cannot be pulled into a
 	// job together with children it made earlier. When this fails we still run
-	// the tool, just with the taskkill fallback on the force path.
+	// the tool, just without the guarantee that its tree dies with us.
 	j, jerr := newKillOnCloseJob()
 
 	if err := cmd.Start(); err != nil {
@@ -58,6 +57,7 @@ func runArgv(argv []string, env []string) int {
 	}
 	if jerr != nil {
 		j = nil
+		fmt.Fprintf(os.Stderr, "pin: no job object (%v); only the tool itself will be killed\n", jerr)
 	} else if err := j.assign(cmd.Process); err != nil {
 		os.Stderr.WriteString("pin: " + err.Error() + "\n")
 		j.close()
@@ -99,23 +99,12 @@ func killAndReap(cmd *exec.Cmd, done <-chan error, j *job) int {
 	if j != nil {
 		_ = j.terminate()
 	} else {
-		killTree(cmd.Process)
+		// No job: this is as far as we can reach. The tool usually spawns more
+		// processes, and they will survive.
+		_ = cmd.Process.Kill()
 	}
 	<-done
 	return exitInterrupted
-}
-
-// killTree is the fallback for when the job could not be created: terminate the
-// child and everything it spawned. The direct child is usually a launcher —
-// node running a script that shells out to npm, which starts another node — so
-// Process.Kill alone would leave the real work alive.
-func killTree(p *os.Process) {
-	tk := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(p.Pid))
-	tk.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := tk.Run(); err == nil {
-		return
-	}
-	_ = p.Kill()
 }
 
 func exitCode(err error) int {
