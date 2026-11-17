@@ -106,9 +106,11 @@ $PIN_HOME (默认 ~/.pin)
 └── pins.json          注册表，只有 CLI 读，shim 不读
 ```
 
-shim 的执行路径只做三件事：读一个两百来字节的文本文件，把钉住的 runtime 目录放到 PATH 最前，然后把进程交给 node。Linux 和 macOS 用 `syscall.Exec` 直接替换进程，Windows 没有 exec(3)，只能多起一个子进程。所有 shim 是同一个二进制文件的硬链接，十个命令也只占一份磁盘。
+shim 的执行路径只做三件事：读一个两百来字节的文本文件，把钉住的 runtime 目录挂到 PATH 末尾，然后把进程交给 node。Linux 和 macOS 用 `syscall.Exec` 直接替换进程，Windows 没有 exec(3)，只能多起一个子进程。所有 shim 是同一个二进制文件的硬链接，十个命令也只占一份磁盘。
 
-把 runtime 目录放到 PATH 最前是为了让工具自己拉起的 `npm`、`pnpm`、`node` 子进程用同一个版本。如果你更希望它们跟随项目，删掉 `runShim` 里的 `prependPath` 那一行就行。
+入口文件始终用绝对路径的钉住 runtime 跑，所以「`ni` 一定跑在 Node 20 上」这件事不受 PATH 影响。子进程是另一回事：`ni`、`nr`、`npm run` 这类转发器只是把活交给项目自己的包管理器，PATH 上已有的 `node`/`npm`（版本管理器按 shell 切好的那个）必须优先，否则在 Node 14 的仓库里 `nr test` 会用 Node 20 跑测试。所以 runtime 目录是追加到 PATH 末尾的，只在 PATH 上完全没有 node 时兜底。
+
+反过来的需求 —— 工具自己拉起的子进程必须跟钉住的 runtime 一致（原生模块、内部再起 node 的包装器）—— 用 `PIN_STRICT_RUNTIME=1`，它会恢复成把 runtime 目录放到 PATH 最前。
 
 ## 性能
 
@@ -136,6 +138,7 @@ Windows 11，Node 20.20.2，各跑 20 次取均值：
 |---|---|
 | `PIN_HOME` | 安装根目录，默认 `~/.pin` |
 | `PIN_NODE` | 省略 `-n` 时使用的 runtime 目录 |
+| `PIN_STRICT_RUNTIME` | 设为非空时，把钉住的 runtime 放到 PATH 最前，子进程跟随它而不是跟随项目 |
 
 ## 已知限制
 

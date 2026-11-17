@@ -106,9 +106,11 @@ $PIN_HOME (default ~/.pin)
 └── pins.json          registry, read only by the CLI, never by a shim
 ```
 
-Running a shim does three things: read a couple hundred bytes of text, put the pinned runtime directory at the front of PATH, hand the process over to node. Linux and macOS use `syscall.Exec`, so the shim is replaced rather than forked; Windows has no exec(3) and costs one extra process. Every shim is a hard link to the same binary, so ten commands still occupy one copy on disk.
+Running a shim does three things: read a couple hundred bytes of text, append the pinned runtime directory to PATH, hand the process over to node. Linux and macOS use `syscall.Exec`, so the shim is replaced rather than forked; Windows has no exec(3) and costs one extra process. Every shim is a hard link to the same binary, so ten commands still occupy one copy on disk.
 
-The runtime goes first on PATH so that the `npm`, `pnpm` and `node` subprocesses a tool spawns use the same version. If you'd rather they follow the project, delete the `prependPath` call in `runShim`.
+The entry file is always executed through the absolute pinned runtime path, so "`ni` runs on Node 20" holds regardless of PATH. Child processes are a different matter: forwarders such as `ni`, `nr` and `npm run` just hand the work to the project's own package manager, so a `node`/`npm` already on PATH (whichever version the shell's manager selected) has to win. Otherwise `nr test` inside a Node 14 repo would run the suite on Node 20. Hence the runtime directory is appended to PATH, serving only as a fallback when no node is on PATH at all.
+
+For the opposite need — a tool whose own children must stay on the pinned runtime (native modules, wrappers that spawn node again) — set `PIN_STRICT_RUNTIME=1` to put the runtime directory back at the front of PATH.
 
 ## Performance
 
@@ -136,6 +138,7 @@ The binary is about 2.9MB.
 |---|---|
 | `PIN_HOME` | Install root, defaults to `~/.pin` |
 | `PIN_NODE` | Runtime directory used when `-n` is omitted |
+| `PIN_STRICT_RUNTIME` | When non-empty, put the pinned runtime first on PATH so child processes follow it instead of the project |
 
 ## Known limitations
 

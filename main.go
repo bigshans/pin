@@ -174,9 +174,17 @@ func runShim(name string, args []string) int {
 			fmt.Fprintf(os.Stderr, "pin: entry for %s is gone (%s)\n  fix: pin rm %s && pin add ...\n", name, sh.Entry, sh.Tool)
 			return 127
 		}
-		// Pinned runtime first on PATH, so the tool's own child processes
-		// (npm/pnpm/yarn, node subprocesses) see the same runtime.
-		env = prependPath(env, filepath.Dir(sh.Node))
+		// The entry always runs on the pinned runtime (argv[0] is absolute).
+		// Child processes are a different question: tools like ni/npm/pnpm only
+		// forward to the project's package manager, so whatever the shell's
+		// version manager put on PATH must win. Append as a fallback instead of
+		// prepending, and let PIN_STRICT_RUNTIME=1 restore the old behaviour for
+		// tools that must stay on their own npm/node.
+		if os.Getenv("PIN_STRICT_RUNTIME") != "" {
+			env = prependPath(env, filepath.Dir(sh.Node))
+		} else {
+			env = appendPath(env, filepath.Dir(sh.Node))
+		}
 		argv = append([]string{sh.Node, sh.Entry}, args...)
 	case "cmd":
 		if runtime.GOOS == "windows" {
@@ -195,6 +203,24 @@ func prependPath(env []string, dir string) []string {
 	for i, kv := range env {
 		if len(kv) > 5 && strings.EqualFold(kv[:5], "PATH=") {
 			env[i] = kv[:5] + dir + sep + kv[5:]
+			return env
+		}
+	}
+	return append(env, "PATH="+dir)
+}
+
+// appendPath puts dir last on PATH: it only answers when nothing earlier in
+// PATH provides that executable, so the project's own runtime keeps priority.
+func appendPath(env []string, dir string) []string {
+	sep := string(os.PathListSeparator)
+	for i, kv := range env {
+		if len(kv) > 5 && strings.EqualFold(kv[:5], "PATH=") {
+			rest := kv[5:]
+			if rest == "" {
+				env[i] = kv[:5] + dir
+			} else {
+				env[i] = kv + sep + dir
+			}
 			return env
 		}
 	}
@@ -272,8 +298,9 @@ usage:
 verbs also accept full names: add / ls / rm / which / doctor / shims
 
 env:
-  PIN_HOME   install root (default ~/.pin)
-  PIN_NODE   default runtime dir when -n is omitted
+  PIN_HOME            install root (default ~/.pin)
+  PIN_NODE            default runtime dir when -n is omitted
+  PIN_STRICT_RUNTIME  keep the pinned runtime first on PATH for child processes
 
 put ~/.pin/bin (or %USERPROFILE%\.pin\bin) on PATH once, then never again.
 `)
