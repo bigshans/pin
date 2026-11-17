@@ -164,14 +164,16 @@ For the opposite need — a tool whose own children must stay on the pinned runt
 
 ## Performance
 
-Windows 11, Node 20.20.2, averaged over 20 runs:
+Windows 11, Node 20.20.2, averaged over 30 warm runs:
 
 | Case | Per run |
 |---|---|
-| `node hello.mjs` | 114.3 ms |
-| Same script through a shim | 126.7 ms |
+| `node hello.mjs` | 74.1 ms |
+| Same script through a shim | 87.4 ms |
+| Reference: `cmd /c echo hi` (process creation alone) | 25.5 ms |
+| Reference: `pin v` (one pin startup) | 26.6 ms |
 
-Of the ~12ms difference, 7 to 8ms is Windows process creation itself (`cmd.exe /c echo` costs about the same) and the rest is Go runtime startup. On Linux the exec path should land at 1 to 2ms, but I don't have a Linux box to measure on.
+The ~13ms difference is one extra process, Go runtime startup, a 200-byte read and four syscalls for the job object. Process creation alone costs about 25ms on this machine, so absolute numbers move with the machine and its antivirus; the delta is the honest part. On Linux the exec path should land at 1 to 2ms, but I don't have a Linux box to measure on.
 
 ## Cross-compiling
 

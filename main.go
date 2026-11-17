@@ -25,7 +25,7 @@ import (
 )
 
 // version is overridden at build time with -X main.version.
-var version = "0.1.0"
+var version = "0.2.0"
 
 const shimMagic = "pin1"
 
@@ -390,6 +390,43 @@ func toolKey(name string) string {
 		return name[i+1:]
 	}
 	return name
+}
+
+// shadowedBy reports the executable the shell would actually run for bin, when
+// that is not pin's own shim. This is the failure that hides: the registry is
+// healthy, the shim exists, and the command that answers you belongs to somebody
+// else — a pnpm or npm global directory earlier on PATH.
+func shadowedBy(bin string) (string, bool) {
+	found, err := exec.LookPath(bin)
+	if err != nil {
+		return "", false // not reachable at all: doctor reports the shim itself
+	}
+	if samePath(found, filepath.Join(binDir(), bin+exeSuffix())) {
+		return "", false
+	}
+	return found, true
+}
+
+// onPath reports whether dir is one of the PATH entries.
+func onPath(dir string) bool {
+	for _, d := range filepath.SplitList(os.Getenv("PATH")) {
+		if d != "" && samePath(d, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func samePath(a, b string) bool {
+	aa, err1 := filepath.Abs(a)
+	bb, err2 := filepath.Abs(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(aa), filepath.Clean(bb))
+	}
+	return filepath.Clean(aa) == filepath.Clean(bb)
 }
 
 // pinByName finds a pinned package by registry key or by one of its bins, so
@@ -1447,6 +1484,11 @@ func cmdDoctor(args []string) int {
 	}
 
 	bad, healed := 0, 0
+	shadowed := 0
+	if !onPath(binDir()) {
+		fmt.Printf("✗ %-12s is not on PATH; no shim can be reached\n", binDir())
+		shadowed++
+	}
 	for key, e := range db {
 		// Registry-level: runtime path gone?
 		if _, err := os.Stat(e.NodePath); err != nil {
@@ -1492,6 +1534,13 @@ func cmdDoctor(args []string) int {
 			if _, err := os.Stat(sh.Entry); err != nil {
 				fmt.Printf("✗ %-12s entry gone: %s\n", key, sh.Entry)
 				bad++
+			}
+			// The failure nobody can see: the shim is fine, but something else
+			// with the same name comes first on PATH, so the shell runs that.
+			if other, ok := shadowedBy(b); ok {
+				fmt.Printf("! %-12s %s is shadowed by %s\n", key, b, other)
+				fmt.Printf("  %-12s put %s before that directory on PATH\n", "", binDir())
+				shadowed++
 			}
 			link := filepath.Join(binDir(), b+exeSuffix())
 			if st, err := os.Stat(link); err != nil {
@@ -1553,6 +1602,9 @@ func cmdDoctor(args []string) int {
 
 	switch {
 	case bad > 0:
+		return 1
+	case shadowed > 0:
+		fmt.Printf("%d shim(s) are shadowed by other commands on PATH\n", shadowed)
 		return 1
 	case orphans > 0:
 		return 1

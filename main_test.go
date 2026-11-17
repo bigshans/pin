@@ -343,3 +343,39 @@ func TestPinByName(t *testing.T) {
 		}
 	}
 }
+
+func TestShadowedBy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PIN_HOME", home)
+	if err := os.MkdirAll(binDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	own := filepath.Join(binDir(), "ni"+exeSuffix())
+	if err := os.WriteFile(own, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only our own directory on PATH: nothing shadows us.
+	t.Setenv("PATH", binDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if other, ok := shadowedBy("ni"); ok {
+		t.Fatalf("unexpected shadow: %s", other)
+	}
+
+	// Somebody else's ni earlier on PATH wins.
+	enemy := t.TempDir()
+	if err := os.WriteFile(filepath.Join(enemy, "ni"+exeSuffix()), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", enemy+string(os.PathListSeparator)+binDir())
+	other, ok := shadowedBy("ni")
+	if !ok {
+		t.Fatal("expected the other directory to shadow ni")
+	}
+	if !samePath(other, filepath.Join(enemy, "ni"+exeSuffix())) {
+		t.Errorf("got %s, want the one in %s", other, enemy)
+	}
+
+	if !onPath(binDir()) {
+		t.Error("binDir should be reported as being on PATH")
+	}
+}
