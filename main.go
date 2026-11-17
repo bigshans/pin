@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,10 +105,25 @@ func writeShimFile(bin, kind, node, entry, tool, ver string) error {
 	return os.WriteFile(shimPath(bin), []byte(body), 0o644)
 }
 
+// maxShimFile bounds what the hot path is willing to read. A shim is six short
+// lines (200 bytes for @antfu/ni), but it lives on disk and can become anything:
+// a stray redirection, a sync client gone wrong, a field added by a future
+// version. Reading it whole into memory is fine at 200 bytes and not fine at
+// 3MB, and this runs before every single invocation of a pinned tool.
+const maxShimFile = 4 << 10
+
 func readShimFile(bin string) (*shimInfo, error) {
-	b, err := os.ReadFile(shimPath(bin))
+	f, err := os.Open(shimPath(bin))
 	if err != nil {
 		return nil, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, maxShimFile+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > maxShimFile {
+		return nil, fmt.Errorf("shim metadata for %q is over %d bytes; run 'pin doctor'", bin, maxShimFile)
 	}
 	lines := strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
 	if len(lines) < 5 || lines[0] != shimMagic {
