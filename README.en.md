@@ -2,7 +2,7 @@
 
 Pins globally installed CLIs to a specific Node runtime.
 
-When Volta stopped being maintained, its most useful behaviour went with it: `volta install -g` binds a tool to the Node version you installed it with, so the tool keeps working no matter which project or Node version you switch to. `pin` does only that. Under 1100 lines, no downloader.
+When Volta stopped being maintained, its most useful behaviour went with it: `volta install -g` binds a tool to the Node version you installed it with, so the tool keeps working no matter which project or Node version you switch to. `pin` does only that. Around 2200 lines, no downloader.
 
 Chinese docs: [README.md](README.md)
 
@@ -12,17 +12,16 @@ $ ni -v                 # ni still runs on the Node 20 it was pinned to
 ```
 
 ## Install
-Prebuilt binaries live in [Releases](https://github.com/bigshans/pin/releases); verify them with `SHA256SUMS`.
+Prebuilt binaries live in [Releases](https://github.com/bigshans/pin/releases); verify them with `SHA256SUMS`. The binary can live anywhere on PATH:
 
 ```bash
 # linux amd64
-mkdir -p ~/.pin/bin
-curl -L -o ~/.pin/bin/pin \
+curl -L -o ~/.local/bin/pin \
   https://github.com/bigshans/pin/releases/latest/download/pin-linux-amd64
-chmod +x ~/.pin/bin/pin
+chmod +x ~/.local/bin/pin
 ```
 
-On Windows grab `pin-windows-amd64.exe`, rename it to `pin.exe` and drop it in `%USERPROFILE%\.pin\bin`.
+On Windows grab `pin-windows-amd64.exe`, rename it to `pin.exe` and put it in any directory on PATH.
 
 Building from source needs Go 1.21 or newer and no third-party dependencies:
 
@@ -32,7 +31,9 @@ cd pin
 ./build.sh install      # builds into ~/.local/bin/pin (override with PIN_BIN_DIR), relinks shims
 ```
 
-Add `~/.pin/bin` (`%USERPROFILE%\.pin\bin` on Windows) to your PATH, ahead of your version manager. `pin` and every pinned command then come from that one directory.
+Add `~/.pin/bin` (`%USERPROFILE%\.pin\bin` on Windows) to your PATH, ahead of your version manager. That directory holds nothing but shims: the `pin` binary does not need to be there, since a shim is a hard link to it and two paths on one filesystem cost one copy (across filesystems it degrades to a copy — 3MB per shim).
+
+After replacing the pin binary run `pin shims` once to relink every shim (the new binary is a different inode); `pin doctor` tells you whether any were missed.
 
 Node comes from whatever version manager you already use (fnm, nvm, mise, asdf, proto, vfox and volta are all recognised); `pin` never downloads anything itself.
 
@@ -44,18 +45,20 @@ pin -n 20 @antfu/ni           # pin to Node 20 (20, 20.20 and 20.20.2 all work)
 pin -n 20 cowsay@1.6.0        # package version and runtime together
 pin --install -n 18 cowsay    # Node 18 isn't installed; let the manager do it first
 pin --pm pnpm @antfu/ni       # install with pnpm (npm / pnpm / yarn)
-pin up                        # upgrade everything pinned, bindings untouched
-pin up cowsay@1.6.0            # upgrade to a specific version
+pin update                    # upgrade everything pinned, bindings untouched
+pin update cowsay@1.6.0       # upgrade to a specific version
 pin -n 22 ni                  # already pinned: just re-point it, no reinstall
-pin                           # list pinned tools
-pin w ni                      # show what the ni shim actually executes
-pin r cowsay                  # unpin; a bin name works too: pin r cowthink
-pin d                         # check runtimes, entry points and shims
-pin d --fix                   # same, but re-bind stale shims and drop orphans
-pin s                         # relink every shim (after replacing the binary)
+pin                           # list pinned tools (same as pin list)
+pin which ni                  # show what the ni shim actually executes
+pin rm cowsay                 # unpin; a bin name works too: pin rm cowthink
+pin doctor                    # check runtimes, entry points and shims
+pin doctor --fix              # same, but re-bind stale shims and drop orphans
+pin shims                     # relink every shim (after replacing the binary)
 pin completion bash           # print the completion script
-pin v
+pin version
 ```
+
+Every verb has a full name and short spellings, all equivalent: `install` (`add`, `a`, `i`), `update` (`up`), `list` (`ls`, `l`), `rm` (`r`, `remove`, `uninstall`, `u`), `which` (`w`), `doctor` (`d`), `shims` (`s`), `version` (`v`), `help` (`h`). `pin help` lists the full names only.
 
 Re-running `pin -n <ver>` on something already pinned only re-points its shims at
 another Node: the entry file does not change, plain JavaScript does not care which
@@ -68,19 +71,21 @@ Three verbs, one job each:
 | Command | What it does |
 |---|---|
 | `pin <pkg>` | **install only**. An already pinned package — or one of its bin names — is refused with a pointer to the other two |
-| `pin up [<pkg>@<ver>]...` | **upgrade only**. No arguments upgrades everything; bindings do not move |
+| `pin update [<pkg>@<ver>]...` | **upgrade only**. No arguments upgrades everything; bindings do not move |
 | `pin -n <ver> <pkg>` | **re-point only**. No reinstall, no upgrade |
 
 They are separate because `pin cowsay` doing both install and upgrade would mean
 different things depending on whether you had run it before. Only an explicit
 `-n` (or `PIN_NODE`) moves a pin, so a command means the same thing in every
-shell — `pin up ni` inside a Node 14 project will not drag ni from 20 down to 14.
+shell — `pin update ni` inside a Node 14 project will not drag ni from 20 down to 14.
 
-If the first argument isn't a command it's treated as a package name, so `pin add ...` and `pin @antfu/ni` are the same. Full names also work: `add`, `ls`, `rm`, `which`, `doctor`, `shims`.
+If the first argument isn't a command it's treated as a package name, so `pin add ...` and `pin @antfu/ni` are the same.
 
 ## Completion
 
-Completions are dynamic: they offer pinned package names, their bin names and the Node versions actually installed on the machine.
+Completions are dynamic: they offer pinned package names, their bin names and the Node versions actually installed on the machine. Two ways to install, pick one:
+
+**1. eval it (simplest; runs `pin` once per shell start)**
 
 ```bash
 # bash, in ~/.bashrc
@@ -93,13 +98,23 @@ eval "$(pin completion zsh)"
 pin completion fish | source
 ```
 
+**2. drop it in as a file (zero startup cost; the shell's completion system loads it lazily)**
+
+```bash
+pin completion zsh  > ~/.local/share/zsh/site-functions/_pin   # must be in $fpath before compinit
+pin completion bash > ~/.local/share/bash-completion/completions/pin
+pin completion fish > ~/.config/fish/completions/pin.fish
+```
+
+bash's XDG directory and fish's `completions/` are scanned by default, so nothing else to configure. zsh needs the directory on `$fpath`, added before `compinit` runs. The first line of `pin completion zsh` is `#compdef pin`: without that tag zsh's compinit skips the file silently and only the eval route works.
+
 PowerShell has no `complete` builtin (that is a bash thing); it uses `Register-ArgumentCompleter`, so append the generated line to your `$PROFILE`:
 
 ```powershell
 Add-Content $PROFILE 'pin completion powershell | Out-String | Invoke-Expression'
 ```
 
-Then open a new pwsh window. Completion comes from `Register-ArgumentCompleter -Native` and covers `pin <TAB>`, `pin -n <TAB>`, `pin r <TAB>` and `pin completion <TAB>`.
+Then open a new pwsh window. Completion comes from `Register-ArgumentCompleter -Native` and covers `pin <TAB>`, `pin -n <TAB>`, `pin rm <TAB>` and `pin completion <TAB>`.
 
 ## Where the runtime comes from
 
@@ -132,7 +147,7 @@ pin --pm yarn cowsay        # just this once
 
 pin deliberately does not remember what installed a package last time: the same
 command should mean the same thing whenever you run it. Which manager was
-actually used is recorded as a fact and shown by `pin ls`; change the setting and
+actually used is recorded as a fact and shown by `pin list`; change the setting and
 the next install follows it.
 
 All three work: `npm install`, `pnpm add`, `yarn add`. `$PIN_HOME/pkgs/<key>` is
@@ -198,7 +213,7 @@ The binary is about 2.9MB.
 - No downloading. Either let `--install` hand it to your manager, or install the version yourself first.
 - yarn 2+ Plug'n'Play is not supported: PnP has no `node_modules` and the entry lives inside a zip, which would need a loader injected into the shim. Set `nodeLinker: node-modules` for packages installed by pin.
 - A native binary shim is executed directly without injecting Node; `.cmd` and `.bat` go through `cmd.exe /c` on Windows.
-- One version per package. For several, `pin r` first; concurrent versions would need a different registry key. The install directory and the registry key are the last path segment of the package name, so `@a/cli` and `@b/cli` cannot coexist either — the second is refused instead of quietly replacing the first.
+- One version per package. For several, `pin rm` first; concurrent versions would need a different registry key. The install directory and the registry key are the last path segment of the package name, so `@a/cli` and `@b/cli` cannot coexist either — the second is refused instead of quietly replacing the first.
 - On Windows, Ctrl+C is broadcast by the shared console to the tool and the process tree it spawned; the shim neither swallows it nor exits first, it just waits for the tool to finish. If the tool detached itself into its own process group (`detached: true`) the broadcast never arrives, so it is killed after a 5 second grace and the shim exits 130; a second Ctrl+C skips the wait. Closing the terminal window or ending pin in Task Manager takes the tool and everything it spawned with it — that is the job object's doing, and it needs no code of ours to run.
 - Pins store absolute paths, so moving to another machine or architecture means pinning again.
 

@@ -2,7 +2,7 @@
 
 把全局安装的 CLI 钉在一个指定的 Node 版本上。
 
-Volta 停维护后，它最有价值的那部分语义没有替代品：`volta install -g` 装的工具会绑定安装时的 Node 版本，之后你切到哪个项目、用哪个 Node，它都照常工作。`pin` 只做这一件事，代码不到 1100 行，不引入任何下载器。
+Volta 停维护后，它最有价值的那部分语义没有替代品：`volta install -g` 装的工具会绑定安装时的 Node 版本，之后你切到哪个项目、用哪个 Node，它都照常工作。`pin` 只做这一件事，代码 2200 行，不引入任何下载器。
 
 英文文档：[README.en.md](README.en.md)
 
@@ -12,17 +12,16 @@ $ ni -v                 # ni 仍然用安装时选定的 Node 20 跑
 ```
 
 ## 安装
-预编译二进制在 [Releases](https://github.com/bigshans/pin/releases) 里，可用 `SHA256SUMS` 校验：
+预编译二进制在 [Releases](https://github.com/bigshans/pin/releases) 里，可用 `SHA256SUMS` 校验。二进制本身放哪都行，只要在 PATH 上：
 
 ```bash
 # linux amd64
-mkdir -p ~/.pin/bin
-curl -L -o ~/.pin/bin/pin \
+curl -L -o ~/.local/bin/pin \
   https://github.com/bigshans/pin/releases/latest/download/pin-linux-amd64
-chmod +x ~/.pin/bin/pin
+chmod +x ~/.local/bin/pin
 ```
 
-Windows 下载 `pin-windows-amd64.exe`，改名成 `pin.exe`，放进 `%USERPROFILE%\.pin\bin`。
+Windows 下载 `pin-windows-amd64.exe`，改名成 `pin.exe`，放进任意一个 PATH 目录。
 
 从源码编译需要 Go 1.21 以上，无第三方依赖：
 
@@ -32,7 +31,9 @@ cd pin
 ./build.sh install      # 编译到 ~/.local/bin/pin（可用 PIN_BIN_DIR 改），并重链已有的 shim
 ```
 
-然后把 `~/.pin/bin`（Windows 是 `%USERPROFILE%\.pin\bin`）加到 PATH 里，位置要在版本管理器之前。之后 `pin` 和所有被钉住的命令都从这个目录来。
+然后把 `~/.pin/bin`（Windows 是 `%USERPROFILE%\.pin\bin`）加到 PATH 里，位置要在版本管理器之前。这个目录只放 shim：`pin` 自己的二进制不需要在里面 —— shim 是指向它的硬链接，两个路径在同一个文件系统上就只占一份，跨文件系统时会退化成拷贝（每个 shim 各占一份 3MB）。
+
+换了 pin 二进制之后跑一次 `pin shims` 重链全部 shim（新二进制和旧 shim 不是同一个 inode 了）；`pin doctor` 会告诉你有没有漏。
 
 Node 由你已有的版本管理器提供（fnm、nvm、mise、asdf、proto、vfox、volta 都可以），`pin` 自己不做下载。
 
@@ -44,18 +45,20 @@ pin -n 20 @antfu/ni           # 指定 Node 20（20 / 20.20 / 20.20.2 都可以�
 pin -n 20 cowsay@1.6.0        # 同时指定包版本
 pin --install -n 18 cowsay    # 本机没有 Node 18，先交给版本管理器装
 pin --pm pnpm @antfu/ni       # 用 pnpm 装（npm / pnpm / yarn 三选一）
-pin up                        # 升级全部已钉住的包，绑定不变
-pin up cowsay@1.6.0            # 升到指定版本，绑定不变
+pin update                    # 升级全部已钉住的包，绑定不变
+pin update cowsay@1.6.0       # 升到指定版本，绑定不变
 pin -n 22 ni                  # 已钉住的包：只换 node，不重装
-pin                           # 列出已钉住的包
-pin w ni                      # 看 ni 这个 shim 实际会执行什么
-pin r cowsay                  # 卸载，也可以用 bin 名：pin r cowthink
-pin d                         # 检查 runtime、入口文件和 shim 是否都还在
-pin d --fix                   # 检查并修复：重绑失效的 shim，删掉没有归属的 shim
-pin s                         # 重新链接所有 shim（换过 pin 二进制之后要跑）
+pin                           # 列出已钉住的包（同 pin list）
+pin which ni                  # 看 ni 这个 shim 实际会执行什么
+pin rm cowsay                 # 卸载，也可以用 bin 名：pin rm cowthink
+pin doctor                    # 检查 runtime、入口文件和 shim 是否都还在
+pin doctor --fix              # 检查并修复：重绑失效的 shim，删掉没有归属的 shim
+pin shims                     # 重新链接所有 shim（换过 pin 二进制之后要跑）
 pin completion bash           # 输出补全脚本
-pin v
+pin version
 ```
+
+每个动词都有全称和简写，两者等价：`install`（`add`、`a`、`i`）、`update`（`up`）、`list`（`ls`、`l`）、`rm`（`r`、`remove`、`uninstall`、`u`）、`which`（`w`）、`doctor`（`d`）、`shims`（`s`）、`version`（`v`）、`help`（`h`）。`pin help` 只列全称。
 
 对一个已经钉住的包再跑 `pin -n <ver>`，只是把它的 shim 指向另一个 node —— 入口文件没变，纯 JS 不在意谁在跑它，所以不重装、不联网，几十毫秒完成。包里有原生模块时（`.node` / `binding.gyp`）会自动改成重装，因为那份编译产物只认一个 node ABI —— 不需要你记哪个工具有编译依赖。
 
@@ -64,18 +67,20 @@ pin v
 | 命令 | 做什么 |
 |---|---|
 | `pin <pkg>` | **只安装**。已经钉住（或用它的 bin 名调用）会被拒绝，并告诉你该用哪个命令 |
-| `pin up [<pkg>@<ver>]...` | **只升级**。不带参数就升级全部，绑定关系不变 |
+| `pin update [<pkg>@<ver>]...` | **只升级**。不带参数就升级全部，绑定关系不变 |
 | `pin -n <ver> <pkg>` | **只换绑**。不重装、不升级 |
 
 之所以拆开：`pin cowsay` 如果既能装又能升级，那它的含义就取决于「你有没有装过」，同一条命令在不同时间做不同的事。现在三者都是幂等于意图的。
 
-只有显式给了 `-n`（或设了 `PIN_NODE`）才会换绑，所以同一个命令在任何 shell 里含义一致 —— 你在 node 14 的仓库里跑 `pin up ni`，不会把 ni 从 20 拖到 14。
+只有显式给了 `-n`（或设了 `PIN_NODE`）才会换绑，所以同一个命令在任何 shell 里含义一致 —— 你在 node 14 的仓库里跑 `pin update ni`，不会把 ni 从 20 拖到 14。
 
-第一个词不是命令时当作包名，所以 `pin add ...`、`pin @antfu/ni` 等价。命令也接受全称：`add`、`ls`、`rm`、`which`、`doctor`、`shims`。
+第一个词不是命令时当作包名，所以 `pin add ...`、`pin @antfu/ni` 等价。
 
 ## 命令补全
 
-补全是动态的，会补出当前钉住的包名、bin 名和本机已有的 Node 版本：
+补全是动态的，会补出当前钉住的包名、bin 名和本机已有的 Node 版本。两种装法，选一个：
+
+**一、eval（最简单，每个 shell 启动时跑一次 `pin`）**
 
 ```bash
 # bash，写进 ~/.bashrc
@@ -88,13 +93,23 @@ eval "$(pin completion zsh)"
 pin completion fish | source
 ```
 
+**二、丢成文件（启动零开销，由各自的补全机制懒加载）**
+
+```bash
+pin completion zsh  > ~/.local/share/zsh/site-functions/_pin   # 需在 compinit 之前入 fpath
+pin completion bash > ~/.local/share/bash-completion/completions/pin
+pin completion fish > ~/.config/fish/completions/pin.fish
+```
+
+bash 的 XDG 目录和 fish 的 `completions/` 都是默认扫描的，不用改配置；zsh 需要把目录放进 `$fpath`（且必须在 `compinit` 之前加）。`pin completion zsh` 的第一行是 `#compdef pin` —— 没有这个 tag，zsh 的 compinit 会不做声地跳过这个文件，只有 eval 那条路能生效。
+
 PowerShell 没有 `complete` 这种内建命令（那是 bash 的），走 `Register-ArgumentCompleter`，把生成的一行追加到 `$PROFILE` 即可：
 
 ```powershell
 Add-Content $PROFILE 'pin completion powershell | Out-String | Invoke-Expression'
 ```
 
-然后重开一个 pwsh 窗口。补全由 PowerShell 的 `Register-ArgumentCompleter -Native` 提供，`pin <TAB>`、`pin -n <TAB>`、`pin r <TAB>`、`pin completion <TAB>` 都能用。
+然后重开一个 pwsh 窗口。补全由 PowerShell 的 `Register-ArgumentCompleter -Native` 提供，`pin <TAB>`、`pin -n <TAB>`、`pin rm <TAB>`、`pin completion <TAB>` 都能用。
 
 ## Node 运行时从哪来
 
@@ -123,7 +138,7 @@ PIN_PM=pnpm pin cowsay      # 这个 shell 里的默认（写进 profile 就是�
 pin --pm yarn cowsay        # 只这一次
 ```
 
-pin 不记「上次用的谁」：同一个命令在任何时候含义都一样。实际用的是谁只作为事实记进注册表，`pin ls` 的 PM 列能看到；改了 `PIN_PM` 之后重装就按新配置来。
+pin 不记「上次用的谁」：同一个命令在任何时候含义都一样。实际用的是谁只作为事实记进注册表，`pin list` 的 PM 列能看到；改了 `PIN_PM` 之后重装就按新配置来。
 
 三家都支持：`npm install`、`pnpm add`、`yarn add`。做法是把 `$PIN_HOME/pkgs/<key>` 当成一个真正的项目目录（pin 先放一个只有 `name` / `private` 的 `package.json` 进去），让选中的包管理器往里面装，装完只读 `node_modules/<pkg>/package.json` 的 `bin` 找入口 —— 所以 npm 的扁平树和 pnpm 的符号链接商店都能用，pin 不需要理解它们的布局差异。
 
@@ -181,7 +196,7 @@ Windows 11，Node 20.20.2，各跑 30 次取均值（先预热）：
 - 不下载 Node。缺版本要么用 `--install` 交给版本管理器，要么自己装好再用。
 - 不支持 yarn 2+ 的 Plug'n'Play（PnP 没有 `node_modules`，entry 在 zip 里需要 loader 注入）；用 pin 装包时请设 `nodeLinker: node-modules`。
 - `bin` 是原生二进制时直接执行，不注入 Node；`.cmd` / `.bat` 在 Windows 上走 `cmd.exe /c`。
-- 同一个包只能钉一个版本，需要多版本共存得先 `pin r` 再装。目录名和注册表 key 都取包名的最后一段，所以 `@a/cli` 和 `@b/cli` 也只能存在一个：装第二个会被拒绝，而不是静静地覆盖第一个。
+- 同一个包只能钉一个版本，需要多版本共存得先 `pin rm` 再装。目录名和注册表 key 都取包名的最后一段，所以 `@a/cli` 和 `@b/cli` 也只能存在一个：装第二个会被拒绝，而不是静静地覆盖第一个。
 - Windows 上 Ctrl+C 由共享控制台广播给工具及其子进程树，shim 自己不吞这个信号、也不抢先退出，只等它收尾。工具如果自己把自己放进了独立进程组（`detached: true`），收不到广播，那就等 5 秒后被强杀，shim 以 130 退出；再按一次 Ctrl+C 跳过等待。关掉终端窗口或在任务管理器里结束 pin 时，工具连同它派生的进程会一起死——这由 job object 保证，不依赖 pin 自己还能执行代码。
 - 换机器或换系统架构要重新 `pin`，因为存的是绝对路径。
 
