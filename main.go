@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -344,6 +345,8 @@ usage:
   pin <pkg>[@ver]...       install & pin with the current node
   pin -n <ver|dir> <pkg>   same, with a chosen runtime  (pin -n 20 @antfu/ni)
   pin --pm <name> <pkg>    install with npm, pnpm or yarn (default: npm)
+  pin -n <ver> <pinned>    re-point an existing pin at another runtime, no reinstall
+  pin --reinstall <pkg>    force a full install (native modules, forced upgrade)
   pin --install -n <ver>   install the runtime first if it is missing
   pin                      list pinned tools        (= pin l)
   pin l                    list
@@ -777,6 +780,79 @@ func prevPM(e Entry) string {
 	return e.PM
 }
 
+// rebind moves one pinned package onto another runtime without touching
+// node_modules. The shim stores the interpreter path, so this is a metadata
+// rewrite plus a relink -- no network, no reinstalling forty dependencies to
+// change a string.
+//
+// It is only sound because most CLI packages are plain JavaScript. Native
+// modules are compiled against one node ABI, so a package carrying them needs a
+// real reinstall, which is what --reinstall forces. The check below is a bounded
+// walk for .node / binding.gyp, enough to warn.
+func rebind(key string, prev Entry, nodePath, rtLabel, prefix string, db map[string]Entry) error {
+	if hasNativeModules(prefix) {
+		fmt.Fprintf(os.Stderr, "pin: warning: %s has native modules built for node %s; run with --reinstall if it fails to load\n", key, prev.Runtime)
+	}
+
+	moved, skipped := 0, 0
+	for _, b := range prev.Bins {
+		sh, err := readShimFile(b)
+		if err != nil {
+			return fmt.Errorf("%s: %w (run 'pin doctor')", b, err)
+		}
+		if sh.Kind != "node" {
+			// A native binary or a .cmd wrapper does not run node at all.
+			skipped++
+			continue
+		}
+		if err := writeShimFile(b, sh.Kind, nodePath, sh.Entry, sh.Tool, rtLabel); err != nil {
+			return err
+		}
+		if err := makeShim(b); err != nil {
+			return err
+		}
+		moved++
+	}
+
+	prev.NodePath = nodePath
+	prev.Runtime = rtLabel
+	db[key] = prev
+	if err := saveDB(db); err != nil {
+		return err
+	}
+
+	note := ""
+	if skipped > 0 {
+		note = fmt.Sprintf(" (%d bin(s) do not run node, left alone)", skipped)
+	}
+	fmt.Printf("  rebound %s → node %s, %d shim(s)%s\n", key, rtLabel, moved, note)
+	return nil
+}
+
+// hasNativeModules reports whether the install tree carries compiled code. The
+// walk is bounded so a pathological tree cannot stall a rebind.
+func hasNativeModules(prefix string) bool {
+	found := false
+	seen := 0
+	_ = filepath.WalkDir(filepath.Join(prefix, "node_modules"), func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		seen++
+		switch {
+		case seen > 20000:
+			return fs.SkipAll
+		case d.IsDir():
+			return nil
+		case strings.HasSuffix(d.Name(), ".node"), d.Name() == "binding.gyp":
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
 // installPackage treats the install directory as a tiny private project and
 // lets the chosen manager fill in node_modules. This is the whole trick: pin
 // owns the destination, so it never has to understand how a manager would have
@@ -839,12 +915,14 @@ func projectName(key string) string {
 func cmdAdd(args []string) int {
 	var rtFlag, pmFlag string
 	var specs []string
-	withInstall := false
+	withInstall, reinstall := false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--install":
 			withInstall = true
+		case a == "--reinstall":
+			reinstall = true
 		case a == "-n" || a == "-r" || a == "--node" || a == "--runtime":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "pin: "+a+" needs a value (e.g. -n 20)")
@@ -919,6 +997,17 @@ func cmdAdd(args []string) int {
 		key := toolKey(pkgName)
 		prefix := pkgDir(key)
 		pm := choosePM(pmFlag)
+
+		// Pointing an existing pin at another runtime is a path edit, not an
+		// install: pure JavaScript does not care which node runs it. Skipped
+		// when the runtime is unchanged, because then this is the upgrade path.
+		if prev, ok := db[key]; ok && !reinstall && prevPM(prev) == pm && prev.NodePath != nodePath {
+			if err := rebind(key, prev, nodePath, rtLabel, prefix, db); err != nil {
+				fmt.Fprintln(os.Stderr, "pin:", err)
+				return 1
+			}
+			continue
+		}
 		if prev, ok := db[key]; ok && prevPM(prev) != pm {
 			// A flat npm tree and a pnpm store do not mix, and a lockfile from
 			// one manager means nothing to another.

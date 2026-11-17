@@ -44,6 +44,8 @@ pin -n 20 @antfu/ni           # 指定 Node 20（20 / 20.20 / 20.20.2 都可以�
 pin -n 20 cowsay@1.6.0        # 同时指定包版本
 pin --install -n 18 cowsay    # 本机没有 Node 18，先交给版本管理器装
 pin --pm pnpm @antfu/ni       # 用 pnpm 装（npm / pnpm / yarn 三选一）
+pin -n 22 ni                  # 已钉住的包：只换 node，不重装
+pin --reinstall -n 22 ni      # 强制重装（原生模块、要顺带升级时）
 pin                           # 列出已钉住的包
 pin w ni                      # 看 ni 这个 shim 实际会执行什么
 pin r cowsay                  # 卸载，也可以用 bin 名：pin r cowthink
@@ -53,6 +55,8 @@ pin s                         # 重新链接所有 shim（换过 pin 二进制�
 pin completion bash           # 输出补全脚本
 pin v
 ```
+
+对一个已经钉住的包再跑 `pin -n <ver>`，只是把它的 shim 指向另一个 node —— 入口文件没变，纯 JS 不在意谁在跑它，所以不重装、不联网，几十毫秒完成。包里有原生模块时（`.node` / `binding.gyp`）会警告一句，那种情况用 `--reinstall` 重新编译。不带 `-n` 的 `pin <pkg>` 仍然是升级。
 
 第一个词不是命令时当作包名，所以 `pin add ...`、`pin @antfu/ni` 等价。命令也接受全称：`add`、`ls`、`rm`、`which`、`doctor`、`shims`。
 

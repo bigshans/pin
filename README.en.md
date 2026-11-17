@@ -44,6 +44,8 @@ pin -n 20 @antfu/ni           # pin to Node 20 (20, 20.20 and 20.20.2 all work)
 pin -n 20 cowsay@1.6.0        # package version and runtime together
 pin --install -n 18 cowsay    # Node 18 isn't installed; let the manager do it first
 pin --pm pnpm @antfu/ni       # install with pnpm (npm / pnpm / yarn)
+pin -n 22 ni                  # already pinned: just re-point it, no reinstall
+pin --reinstall -n 22 ni      # full reinstall (native modules, or a forced upgrade)
 pin                           # list pinned tools
 pin w ni                      # show what the ni shim actually executes
 pin r cowsay                  # unpin; a bin name works too: pin r cowthink

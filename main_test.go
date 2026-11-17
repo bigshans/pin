@@ -178,3 +178,53 @@ func TestProjectName(t *testing.T) {
 		}
 	}
 }
+
+// Re-pointing an existing pin must rewrite the metadata and relink, without
+// touching node_modules: the entry file does not change, only the interpreter.
+func TestRebind(t *testing.T) {
+	t.Setenv("PIN_HOME", t.TempDir())
+
+	const oldNode, newNode = `C:\old\v20\node.exe`, `C:\new\v22\node.exe`
+	if err := writeShimFile("nr", "node", oldNode, `C:\e\nr.mjs`, "ni", "20.0.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeShim("nr"); err != nil {
+		t.Fatal(err)
+	}
+	// A shim that does not run node must be left alone.
+	if err := writeShimFile("nf", "direct", "", `C:\e\nf.exe`, "ni", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeShim("nf"); err != nil {
+		t.Fatal(err)
+	}
+
+	db := map[string]Entry{"ni": {
+		Spec: "@antfu/ni", Runtime: "20.0.0", NodePath: oldNode, Bins: []string{"nr", "nf"}, PM: "npm",
+	}}
+	if err := rebind("ni", db["ni"], newNode, "22.0.0", pkgDir("ni"), db); err != nil {
+		t.Fatal(err)
+	}
+
+	sh, err := readShimFile("nr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sh.Node != newNode || sh.Version != "22.0.0" {
+		t.Errorf("node shim not rebound: %+v", *sh)
+	}
+	if sh, err := readShimFile("nf"); err != nil || sh.Node != "" {
+		t.Errorf("non-node shim was touched: %+v %v", sh, err)
+	}
+
+	saved, err := loadDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved["ni"].NodePath != newNode || saved["ni"].Runtime != "22.0.0" {
+		t.Errorf("registry not updated: %+v", saved["ni"])
+	}
+	if len(saved["ni"].Bins) != 2 {
+		t.Errorf("bins changed: %v", saved["ni"].Bins)
+	}
+}
