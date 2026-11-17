@@ -344,30 +344,32 @@ func usage() {
 	os.Stdout.WriteString(`pin ` + version + ` — pin global CLI tools to a Node runtime
 
 usage:
-  pin <pkg>[@ver]...       install & pin with the current node
-  pin -n <ver|dir> <pkg>   same, with a chosen runtime  (pin -n 20 @antfu/ni)
-  pin --pm <name> <pkg>    install with npm, pnpm or yarn (default: npm)
-  pin up [<pkg>...]        upgrade pinned packages, keeping their runtime
-  pin -n <ver> <pinned>    re-point an existing pin at another runtime, no reinstall
-  pin --install -n <ver>   install the runtime first if it is missing
-  pin                      list pinned tools        (= pin l)
-  pin l                    list
-  pin r <name|bin>...      unpin (bin names accepted)
-  pin w <bin>              show what a shim resolves to
-  pin d [--fix]            verify, and re-bind stale shims / drop orphans
-  pin s                    relink shims (after upgrading pin)
-  pin completion <shell>   print completion glue (bash|zsh|fish|powershell)
-  pin v | pin -v           print version
+  pin <pkg>[@ver]...      install & pin with the current node
+  pin -n <ver|dir> <pkg>  same, with a chosen runtime  (pin -n 20 @antfu/ni)
+  pin --pm <name> <pkg>   install with npm | pnpm | yarn  (default: npm)
+  pin --install -n <ver>  install the runtime first if it is missing
+  pin                     list pinned tools  (same as pin list)
+  pin -n <ver> <pinned>   re-point an existing pin, no reinstall
 
-verbs also accept full names: add / ls / rm / which / doctor / shims
+commands:
+  install                 install & pin: pin install <pkg>[@ver]
+  update                  upgrade pinned packages, keeping their runtime
+  list                    list pinned tools
+  rm                      unpin: rm <pkg|bin>...
+  which                   show what a shim resolves to: pin which <bin>
+  doctor                  verify; --fix re-binds stale shims, drops orphans
+  shims                   relink shims after upgrading pin
+  completion              print shell glue: bash | zsh | fish | powershell
+  version                 print version
+  help                    print this
 
 env:
-  PIN_HOME            install root (default ~/.pin)
-  PIN_NODE            default runtime dir when -n is omitted
-  PIN_PM              default package manager when --pm is omitted
-  PIN_STRICT_RUNTIME  keep the pinned runtime first on PATH for child processes
+  PIN_HOME                install root (default ~/.pin)
+  PIN_NODE                default runtime dir when -n is omitted
+  PIN_PM                  default package manager when --pm is omitted
+  PIN_STRICT_RUNTIME      keep the pinned runtime first on PATH for child processes
 
-put ~/.pin/bin (or %USERPROFILE%\.pin\bin) on PATH once, then never again.
+put the shim dir ~/.pin/bin (Windows: %USERPROFILE%\.pin\bin) on PATH once, then never again.
 `)
 }
 
