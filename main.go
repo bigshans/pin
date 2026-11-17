@@ -1164,14 +1164,22 @@ func makeShim(bin string) error {
 	}
 	dst := filepath.Join(binDir(), bin+exeSuffix())
 
-	// A freshly replaced binary is briefly locked on Windows — antivirus, the
-	// search indexer, or another shell running the shim. Retrying turns "the
-	// process cannot access the file" into a non-event instead of a failed
-	// install that leaves the package half done.
+	// Already this binary: nothing to do. Relinking every shim on every `pin s`
+	// only feeds the scanner, which is what gets the file locked in the first
+	// place.
+	if selfSt, err := os.Stat(self); err == nil {
+		if st, err := os.Stat(dst); err == nil && os.SameFile(selfSt, st) {
+			return nil
+		}
+	}
+
+	// A freshly written binary is briefly locked on Windows: antivirus scans it,
+	// the indexer reads it, another shell may be running the shim. Back off and
+	// retry instead of turning that into a failed install.
 	var last error
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < 8; attempt++ {
 		if attempt > 0 {
-			time.Sleep(time.Duration(attempt) * 50 * time.Millisecond)
+			time.Sleep(time.Duration(attempt) * 60 * time.Millisecond)
 		}
 		if err := os.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 			last = err
@@ -1429,19 +1437,25 @@ func cmdShims() int {
 		fmt.Fprintln(os.Stderr, "pin:", err)
 		return 1
 	}
-	n := 0
+	n, failed := 0, 0
 	for _, de := range ents {
 		if de.IsDir() || !strings.HasSuffix(de.Name(), ".txt") {
 			continue
 		}
 		bin := strings.TrimSuffix(de.Name(), ".txt")
 		if err := makeShim(bin); err != nil {
+			// One locked file must not stop the other nine from being fixed.
 			fmt.Fprintf(os.Stderr, "pin: %s: %v\n", bin, err)
-			return 1
+			failed++
+			continue
 		}
 		n++
 	}
 	fmt.Printf("relinked %d shims in %s\n", n, binDir())
+	if failed > 0 {
+		fmt.Fprintf(os.Stderr, "pin: %d shim(s) could not be replaced; close whatever is running them and rerun 'pin s'\n", failed)
+		return 1
+	}
 	return 0
 }
 
