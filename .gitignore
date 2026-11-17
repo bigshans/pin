@@ -1,0 +1,12 @@
+# built artifacts
+/dist/
+/pin
+/pin.exe
+*.test
+*.out
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
