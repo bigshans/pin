@@ -56,6 +56,17 @@ pin completion bash           # print the completion script
 pin v
 ```
 
+Re-running `pin -n <ver>` on something already pinned only re-points its shims at
+another Node: the entry file does not change, plain JavaScript does not care which
+Node runs it, so it takes tens of milliseconds and no network. Packages carrying
+native code (`.node` / `binding.gyp`) get a warning, and those want `--reinstall`
+to rebuild.
+
+`pin <pkg>` without `-n` upgrades: it resolves newer versions and reinstalls, but
+keeps the runtime the package is already bound to. Only an explicit `-n` (or
+`PIN_NODE`) moves a pin, so the command means the same thing in every shell —
+`pin ni` inside a Node 14 project will not drag ni from 20 down to 14.
+
 If the first argument isn't a command it's treated as a package name, so `pin add ...` and `pin @antfu/ni` are the same. Full names also work: `add`, `ls`, `rm`, `which`, `doctor`, `shims`.
 
 ## Completion

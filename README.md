@@ -56,7 +56,9 @@ pin completion bash           # 输出补全脚本
 pin v
 ```
 
-对一个已经钉住的包再跑 `pin -n <ver>`，只是把它的 shim 指向另一个 node —— 入口文件没变，纯 JS 不在意谁在跑它，所以不重装、不联网，几十毫秒完成。包里有原生模块时（`.node` / `binding.gyp`）会警告一句，那种情况用 `--reinstall` 重新编译。不带 `-n` 的 `pin <pkg>` 仍然是升级。
+对一个已经钉住的包再跑 `pin -n <ver>`，只是把它的 shim 指向另一个 node —— 入口文件没变，纯 JS 不在意谁在跑它，所以不重装、不联网，几十毫秒完成。包里有原生模块时（`.node` / `binding.gyp`）会警告一句，那种情况用 `--reinstall` 重新编译。
+
+不带 `-n` 的 `pin <pkg>` 是升级：解析依赖的新版本然后重装，但**保持原来绑定的 node**。只有显式给了 `-n`（或设了 `PIN_NODE`）才会换绑，所以同一个命令在任何 shell 里含义一致 —— 你在 node 14 的仓库里跑 `pin ni`，不会把 ni 从 20 拖到 14。
 
 第一个词不是命令时当作包名，所以 `pin add ...`、`pin @antfu/ni` 等价。命令也接受全称：`add`、`ls`、`rm`、`which`、`doctor`、`shims`。
 

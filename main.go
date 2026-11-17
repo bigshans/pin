@@ -725,14 +725,15 @@ func resolveRuntime(flag string) (string, string, error) {
 	if lp, err := exec.LookPath(nodeExeName()); err == nil {
 		if abs, err := filepath.Abs(lp); err == nil {
 			d := filepath.Dir(abs)
+			// fnm/volta shims live in a side dir; prefer the real install dir.
 			if real, err := filepath.EvalSymlinks(abs); err == nil {
-				// fnm/volta shims live in a side dir; prefer the real install dir.
-				if np, err := findNode(filepath.Dir(real)); err == nil {
-					return filepath.Dir(real), np, nil
+				dir := filepath.Dir(real)
+				if np, err := findNode(dir); err == nil {
+					return runtimeLabel(dir), np, nil
 				}
 			}
 			if np, err := findNode(d); err == nil {
-				return d, np, nil
+				return runtimeLabel(d), np, nil
 			}
 		}
 	}
@@ -960,6 +961,12 @@ func cmdAdd(args []string) int {
 		}
 	}
 
+	// Whether the runtime was chosen for this run, or is just whatever the shell
+	// happens to have. Only an explicit choice may move an existing pin: a bare
+	// `pin cowsay` in a node 14 shell must upgrade cowsay where it is, not drag
+	// it from node 20 to 14.
+	explicitRT := rtFlag != "" || os.Getenv("PIN_NODE") != ""
+
 	rtLabel, nodePath, err := resolveRuntime(rtFlag)
 	if err != nil && withInstall && rtFlag != "" {
 		if ierr := installRuntime(rtFlag); ierr != nil {
@@ -998,11 +1005,20 @@ func cmdAdd(args []string) int {
 		prefix := pkgDir(key)
 		pm := choosePM(pmFlag)
 
+		pkgNode, pkgLabel := nodePath, rtLabel
+		if prev, ok := db[key]; ok && !explicitRT {
+			if _, err := os.Stat(prev.NodePath); err == nil {
+				pkgNode, pkgLabel = prev.NodePath, prev.Runtime
+			} else {
+				fmt.Fprintf(os.Stderr, "pin: note: %s was pinned to node %s, which is gone; using %s\n", key, prev.Runtime, rtLabel)
+			}
+		}
+
 		// Pointing an existing pin at another runtime is a path edit, not an
 		// install: pure JavaScript does not care which node runs it. Skipped
 		// when the runtime is unchanged, because then this is the upgrade path.
-		if prev, ok := db[key]; ok && !reinstall && prevPM(prev) == pm && prev.NodePath != nodePath {
-			if err := rebind(key, prev, nodePath, rtLabel, prefix, db); err != nil {
+		if prev, ok := db[key]; ok && !reinstall && prevPM(prev) == pm && prev.NodePath != pkgNode {
+			if err := rebind(key, prev, pkgNode, pkgLabel, prefix, db); err != nil {
 				fmt.Fprintln(os.Stderr, "pin:", err)
 				return 1
 			}
@@ -1018,8 +1034,8 @@ func cmdAdd(args []string) int {
 			}
 		}
 
-		fmt.Printf("→ %s  (runtime %s, via %s)\n", spec, rtLabel, pm)
-		if err := installPackage(pm, key, prefix, spec, nodePath); err != nil {
+		fmt.Printf("→ %s  (runtime %s, via %s)\n", spec, pkgLabel, pm)
+		if err := installPackage(pm, key, prefix, spec, pkgNode); err != nil {
 			fmt.Fprintf(os.Stderr, "pin: %s install failed for %s: %v\n", pm, spec, err)
 			if pm == "yarn" {
 				fmt.Fprintln(os.Stderr, "  yarn 2+ defaults to Plug'n'Play, which has no node_modules; set nodeLinker: node-modules in .yarnrc.yml")
@@ -1088,8 +1104,8 @@ func cmdAdd(args []string) int {
 		db[key] = Entry{
 			Spec:     spec,
 			Version:  meta.Version,
-			Runtime:  rtLabel,
-			NodePath: nodePath,
+			Runtime:  pkgLabel,
+			NodePath: pkgNode,
 			Bins:     names,
 			PM:       pm,
 		}
