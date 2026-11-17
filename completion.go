@@ -13,8 +13,16 @@ import (
 // calls it. Keeping the logic in Go means one implementation for every shell.
 
 var verbs = []string{
-	"add", "a", "up", "update", "ls", "l", "rm", "r", "which", "w", "doctor", "d",
-	"shims", "s", "completion", "version", "v", "help", "h",
+	"install", "add", "a", "i",
+	"update", "up",
+	"list", "ls", "l",
+	"remove", "rm", "r", "uninstall", "u",
+	"which", "w",
+	"doctor", "d",
+	"shims", "s",
+	"completion",
+	"version", "v",
+	"help", "h",
 }
 
 var flags = []string{"-n", "--node", "--runtime", "--install", "--fix", "--pm"}
@@ -177,8 +185,10 @@ _pin_complete() {
 complete -o default -F _pin_complete pin
 `
 
-const zshCompletion = `# pin zsh completion. Add to ~/.zshrc:
+const zshCompletion = `#compdef pin
+# pin zsh completion. Either eval it:
 #   eval "$(pin completion zsh)"
+# or drop it in a directory on $fpath as _pin (autoloaded by compinit).
 _pin() {
     local -a cands args
     args=(${words[2,-1]})
