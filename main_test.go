@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -81,5 +82,56 @@ func TestKeyHolder(t *testing.T) {
 		if clash != c.clash || held != c.held {
 			t.Errorf("%s: got (%q, %v), want (%q, %v) — %s", c.name, held, clash, c.held, c.clash, c.reason)
 		}
+	}
+}
+
+// An interrupted write must never leave a truncated registry behind: the shim
+// metadata and the registry are the only record of what is pinned.
+func TestWriteFileAtomic(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PIN_HOME", dir)
+
+	db := map[string]Entry{"ni": {Spec: "@antfu/ni", Bins: []string{"ni", "nr"}}}
+	if err := saveDB(db); err != nil {
+		t.Fatal(err)
+	}
+	db["cowsay"] = Entry{Spec: "cowsay", Bins: []string{"cowsay"}}
+	if err := saveDB(db); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := loadDB()
+	if err != nil {
+		t.Fatalf("registry unreadable after two saves: %v", err)
+	}
+	if len(got) != 2 || got["cowsay"].Spec != "cowsay" {
+		t.Fatalf("unexpected registry contents: %+v", got)
+	}
+
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range ents {
+		if strings.Contains(e.Name(), ".tmp") {
+			t.Errorf("temp file left behind: %s", e.Name())
+		}
+	}
+}
+
+// A write that fails must leave the previous file intact rather than gutting it.
+func TestWriteFileAtomicKeepsOldOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pins.json")
+	if err := writeFileAtomic(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Renaming onto a path inside a directory that does not exist fails after
+	// the data has been written, which is the interesting half of the sequence.
+	if err := writeFileAtomic(filepath.Join(dir, "missing", "x"), []byte("new"), 0o644); err == nil {
+		t.Fatal("expected the write to fail")
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "old" {
+		t.Fatalf("previous file damaged: %q, %v", b, err)
 	}
 }

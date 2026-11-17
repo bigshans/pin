@@ -80,7 +80,36 @@ func saveDB(m map[string]Entry) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dbPath(), b, 0o644)
+	return writeFileAtomic(dbPath(), b, 0o644)
+}
+
+// writeFileAtomic replaces path with data so that an interrupted write leaves
+// either the old file or the new one, never a truncated one. This file is the
+// only record of what is pinned: losing it strands every shim on disk. Rename
+// is an atomic replace on POSIX and on Windows (MoveFileEx with REPLACE_EXISTING),
+// which is the part of a real database we would actually miss.
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp) // a no-op once the rename succeeded
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, perm); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // ---------- shim metadata ----------
@@ -102,7 +131,7 @@ func writeShimFile(bin, kind, node, entry, tool, ver string) error {
 		return err
 	}
 	body := strings.Join([]string{shimMagic, kind, node, entry, tool, ver}, "\n") + "\n"
-	return os.WriteFile(shimPath(bin), []byte(body), 0o644)
+	return writeFileAtomic(shimPath(bin), []byte(body), 0o644)
 }
 
 // maxShimFile bounds what the hot path is willing to read. A shim is six short
