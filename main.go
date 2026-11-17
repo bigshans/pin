@@ -212,6 +212,10 @@ func cli(args []string) int {
 			return cmdDoctor(args[1:])
 		case "s", "shims":
 			return cmdShims()
+		case "completion":
+			return cmdCompletion(args[1:])
+		case "__complete":
+			return cmdComplete(args[1:])
 		case "h", "help":
 			usage()
 			return 0
@@ -252,6 +256,7 @@ usage:
   pin w <bin>              show what a shim resolves to
   pin d [--fix]            verify, and re-bind stale shims / drop orphans
   pin s                    relink shims (after upgrading pin)
+  pin completion <shell>   print completion glue (bash|zsh|fish|powershell)
   pin v | pin -v           print version
 
 verbs also accept full names: add / ls / rm / which / doctor / shims

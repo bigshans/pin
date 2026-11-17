@@ -36,10 +36,32 @@ pin r cowsay                  # unpin; a bin name works too: pin r cowthink
 pin d                         # check runtimes, entry points and shims
 pin d --fix                   # same, but re-bind stale shims and drop orphans
 pin s                         # relink every shim (after replacing the binary)
+pin completion bash           # print the completion script
 pin v
 ```
 
 If the first argument isn't a command it's treated as a package name, so `pin add ...` and `pin @antfu/ni` are the same. Full names also work: `add`, `ls`, `rm`, `which`, `doctor`, `shims`.
+
+## Completion
+
+Completions are dynamic: they offer pinned package names, their bin names and the Node versions actually installed on the machine.
+
+```bash
+# bash, in ~/.bashrc
+eval "$(pin completion bash)"
+
+# zsh, in ~/.zshrc
+eval "$(pin completion zsh)"
+
+# fish, in ~/.config/fish/config.fish
+pin completion fish | source
+```
+
+PowerShell, in `$PROFILE`:
+
+```powershell
+pin completion powershell | Out-String | Invoke-Expression
+```
 
 ## Where the runtime comes from
 

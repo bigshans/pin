@@ -36,10 +36,32 @@ pin r cowsay                  # 卸载，也可以用 bin 名：pin r cowthink
 pin d                         # 检查 runtime、入口文件和 shim 是否都还在
 pin d --fix                   # 检查并修复：重绑失效的 shim，删掉没有归属的 shim
 pin s                         # 重新链接所有 shim（换过 pin 二进制之后要跑）
+pin completion bash           # 输出补全脚本
 pin v
 ```
 
 第一个词不是命令时当作包名，所以 `pin add ...`、`pin @antfu/ni` 等价。命令也接受全称：`add`、`ls`、`rm`、`which`、`doctor`、`shims`。
+
+## 命令补全
+
+补全是动态的，会补出当前钉住的包名、bin 名和本机已有的 Node 版本：
+
+```bash
+# bash，写进 ~/.bashrc
+eval "$(pin completion bash)"
+
+# zsh，写进 ~/.zshrc
+eval "$(pin completion zsh)"
+
+# fish，写进 ~/.config/fish/config.fish
+pin completion fish | source
+```
+
+PowerShell，写进 `$PROFILE`：
+
+```powershell
+pin completion powershell | Out-String | Invoke-Expression
+```
 
 ## Node 运行时从哪来
 
