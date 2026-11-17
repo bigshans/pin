@@ -752,15 +752,14 @@ func pmArgs(pm, spec string) ([]string, bool) {
 	return nil, false
 }
 
-// choosePM decides the package manager for one package: --pm wins, then what the
-// package was installed with before (re-pinning is an upgrade, and silently
-// switching layout on an upgrade is not what anyone means), then PIN_PM, then npm.
-func choosePM(flag string, prev Entry) string {
+// choosePM decides the package manager for one package, from settings only: --pm
+// for this run, PIN_PM for the environment, npm otherwise. What a package was
+// installed with last time is recorded for `pin ls` and doctor, but it is not a
+// preference -- repeating an install must not depend on history, or the same
+// command would mean different things at different times.
+func choosePM(flag string) string {
 	if flag != "" {
 		return flag
-	}
-	if prev.PM != "" {
-		return prev.PM
 	}
 	if env := os.Getenv("PIN_PM"); env != "" {
 		if _, ok := pmArgs(env, ""); ok {
@@ -918,7 +917,7 @@ func cmdAdd(args []string) int {
 		pkgName, _ := splitSpec(spec)
 		key := toolKey(pkgName)
 		prefix := pkgDir(key)
-		pm := choosePM(pmFlag, db[key])
+		pm := choosePM(pmFlag)
 		if prev, ok := db[key]; ok && prevPM(prev) != pm {
 			// A flat npm tree and a pnpm store do not mix, and a lockfile from
 			// one manager means nothing to another.

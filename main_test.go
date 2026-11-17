@@ -149,20 +149,19 @@ func TestPMArgs(t *testing.T) {
 }
 
 func TestChoosePM(t *testing.T) {
-	t.Setenv("PIN_PM", "")
 	cases := []struct {
-		flag, prevPM, env, want string
+		flag, env, want string
 	}{
-		{"pnpm", "npm", "", "pnpm"}, // the flag always wins
-		{"", "yarn", "", "yarn"},    // upgrade keeps what the package used
-		{"", "", "pnpm", "pnpm"},    // nothing recorded: the environment decides
-		{"", "", "", "npm"},         // default
-		{"", "", "bogus", "npm"},    // an unusable PIN_PM falls back
+		{"pnpm", "", "pnpm"},     // the flag wins
+		{"yarn", "pnpm", "yarn"}, // and beats the environment
+		{"", "pnpm", "pnpm"},     // the environment is the persisted setting
+		{"", "", "npm"},          // default
+		{"", "bogus", "npm"},     // an unusable PIN_PM falls back
 	}
 	for _, c := range cases {
 		t.Setenv("PIN_PM", c.env)
-		if got := choosePM(c.flag, Entry{PM: c.prevPM}); got != c.want {
-			t.Errorf("flag=%q prev=%q env=%q: got %q, want %q", c.flag, c.prevPM, c.env, got, c.want)
+		if got := choosePM(c.flag); got != c.want {
+			t.Errorf("flag=%q env=%q: got %q, want %q", c.flag, c.env, got, c.want)
 		}
 	}
 }

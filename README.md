@@ -99,16 +99,18 @@ Add-Content $PROFILE 'pin completion powershell | Out-String | Invoke-Expression
 
 ## 包管理器从哪来
 
-装包这一步交给谁，按下面这个顺序决定：
+装包这一步交给谁，只有两处配置：`pin --pm <name>` 管这一次，`PIN_PM` 管这个 shell，都没有就是 `npm`。
 
-1. `pin --pm <name>` 显式指定；
-2. 这个包上次是用谁装的（重跑 `pin add` 是升级，不悄悄换掉布局）；
-3. `PIN_PM` 环境变量；
-4. 默认 `npm`。
+```bash
+PIN_PM=pnpm pin cowsay      # 这个 shell 里的默认（写进 profile 就是持久配置）
+pin --pm yarn cowsay        # 只这一次
+```
+
+pin 不记「上次用的谁」：同一个命令在任何时候含义都一样。实际用的是谁只作为事实记进注册表，`pin ls` 的 PM 列能看到；改了 `PIN_PM` 之后重装就按新配置来。
 
 三家都支持：`npm install`、`pnpm add`、`yarn add`。做法是把 `$PIN_HOME/pkgs/<key>` 当成一个真正的项目目录（pin 先放一个只有 `name` / `private` 的 `package.json` 进去），让选中的包管理器往里面装，装完只读 `node_modules/<pkg>/package.json` 的 `bin` 找入口 —— 所以 npm 的扁平树和 pnpm 的符号链接商店都能用，pin 不需要理解它们的布局差异。
 
-换包管理器时会先删掉旧目录再装，两家的布局不能混。yarn 2+ 默认的 Plug'n'Play 没有 `node_modules`，pin 会直接报错并提示：在 `.yarnrc.yml` 里设 `nodeLinker: node-modules`。
+换包管理器时会先删掉旧目录再装 —— 两家的布局不能混。yarn 2+ 默认的 Plug'n'Play 没有 `node_modules`，pin 会直接报错并提示：在 `.yarnrc.yml` 里设 `nodeLinker: node-modules`。
 
 ## 工作原理
 

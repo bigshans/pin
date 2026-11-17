@@ -99,13 +99,19 @@ The resolved node path is written into the shim at install time, so a pin binds 
 
 ## Where the package manager comes from
 
-Installing a package is handed to one of three managers, chosen in this order:
+Installing a package is handed to one of three managers. There are two settings,
+no hidden state: `pin --pm <name>` for this run, `PIN_PM` for the environment, and
+npm when neither is set.
 
-1. `pin --pm <name>`;
-2. whatever installed the package last time (re-running `pin add` is an upgrade,
-   and swapping the layout under it is not what anyone means);
-3. the `PIN_PM` environment variable;
-4. npm.
+```bash
+PIN_PM=pnpm pin cowsay      # the default for this shell (put it in your profile)
+pin --pm yarn cowsay        # just this once
+```
+
+pin deliberately does not remember what installed a package last time: the same
+command should mean the same thing whenever you run it. Which manager was
+actually used is recorded as a fact and shown by `pin ls`; change the setting and
+the next install follows it.
 
 All three work: `npm install`, `pnpm add`, `yarn add`. `$PIN_HOME/pkgs/<key>` is
 treated as a real project directory — pin drops a `package.json` with nothing
