@@ -29,6 +29,10 @@ var version = "0.2.0"
 
 const shimMagic = "pin1"
 
+// pathSep is os.PathListSeparator as a string, computed once: converting a rune
+// to a string allocates, and the hot path joins paths on every invocation.
+var pathSep = string(os.PathSeparator)
+
 type Entry struct {
 	Spec     string   `json:"spec"`
 	Version  string   `json:"version"`
@@ -43,21 +47,29 @@ type Entry struct {
 // ---------- paths ----------
 
 func pinHome() string {
-	if h := os.Getenv("PIN_HOME"); h != "" {
-		return h
+	h := os.Getenv("PIN_HOME")
+	if h == "" {
+		var err error
+		h, err = os.UserHomeDir()
+		if err != nil {
+			h = "."
+		}
+		h += pathSep + ".pin"
 	}
-	hd, err := os.UserHomeDir()
-	if err != nil {
-		hd = "."
+	// These paths are concatenated instead of run through filepath.Join: the
+	// shim path is built before every single invocation of a pinned tool, and
+	// Join's Clean pass allocates for inputs that never need cleaning.
+	for len(h) > 1 && strings.HasSuffix(h, pathSep) {
+		h = h[:len(h)-1]
 	}
-	return filepath.Join(hd, ".pin")
+	return h
 }
 
-func dbPath() string   { return filepath.Join(pinHome(), "pins.json") }
-func binDir() string   { return filepath.Join(pinHome(), "bin") }
-func toolsDir() string { return filepath.Join(pinHome(), "tools") }
+func dbPath() string   { return pinHome() + pathSep + "pins.json" }
+func binDir() string   { return pinHome() + pathSep + "bin" }
+func toolsDir() string { return pinHome() + pathSep + "tools" }
 func pkgDir(k string) string {
-	return filepath.Join(pinHome(), "pkgs", k)
+	return pinHome() + pathSep + "pkgs" + pathSep + k
 }
 
 // ---------- registry ----------
@@ -128,7 +140,7 @@ type shimInfo struct {
 }
 
 func shimPath(bin string) string {
-	return filepath.Join(toolsDir(), bin+".txt")
+	return toolsDir() + pathSep + bin + ".txt"
 }
 
 func writeShimFile(bin, kind, node, entry, tool, ver string) error {
@@ -146,42 +158,95 @@ func writeShimFile(bin, kind, node, entry, tool, ver string) error {
 // 3MB, and this runs before every single invocation of a pinned tool.
 const maxShimFile = 4 << 10
 
+// shimBuf is the one buffer the hot path reads into. Nothing fans out before
+// Exec — a shim is a single-threaded process by then, and the CLI walks its
+// shims one at a time — so a package-level buffer saves an allocation per
+// invocation. The strings derived from it stay alive for the life of the
+// process, which is the point: it is overwritten only by the next shim.
+var shimBuf [maxShimFile]byte
+
 func readShimFile(bin string) (*shimInfo, error) {
 	f, err := os.Open(shimPath(bin))
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, maxShimFile+1))
-	if err != nil {
-		return nil, err
+	// A regular file returns everything asked for unless it hits EOF, so one
+	// read is enough for six short lines and saves the extra read + fstat that
+	// io.ReadAll and os.ReadFile each spend sizing the buffer.
+	n, rerr := f.Read(shimBuf[:])
+	f.Close()
+	if rerr != nil && rerr != io.EOF {
+		return nil, rerr
 	}
-	if len(b) > maxShimFile {
-		return nil, fmt.Errorf("shim metadata for %q is over %d bytes; run 'pin doctor'", bin, maxShimFile)
+	if n == len(shimBuf) {
+		return nil, fmt.Errorf("shim metadata for %q is %d bytes or more; run 'pin doctor'", bin, maxShimFile)
 	}
-	lines := strings.Split(strings.ReplaceAll(string(b), "\r\n", "\n"), "\n")
-	if len(lines) < 5 || lines[0] != shimMagic {
+
+	// Six lines: magic, kind, node, entry, tool, version. Cut in place so the
+	// only allocation is the string over the buffer. The last line may be cut
+	// short by EOF: earlier versions wrote five lines with no version.
+	s := string(shimBuf[:n])
+	var f6 [6]string
+	for i := 0; i < 5; i++ {
+		j := strings.IndexByte(s, '\n')
+		if j < 0 {
+			if i < 4 {
+				return nil, fmt.Errorf("corrupt shim for %q", bin)
+			}
+			j = len(s)
+		}
+		f6[i] = strings.TrimSuffix(s[:j], "\r")
+		if j == len(s) {
+			s = ""
+			break
+		}
+		s = s[j+1:]
+	}
+	if f6[0] != shimMagic {
 		return nil, fmt.Errorf("corrupt shim for %q", bin)
 	}
-	info := &shimInfo{Kind: lines[1], Node: lines[2], Entry: lines[3], Tool: lines[4]}
-	if len(lines) > 5 {
-		info.Version = strings.TrimSpace(lines[5])
-	}
-	return info, nil
+	return &shimInfo{
+		Kind:    f6[1],
+		Node:    f6[2],
+		Entry:   f6[3],
+		Tool:    f6[4],
+		Version: strings.TrimSpace(s),
+	}, nil
 }
 
 // ---------- entry point ----------
 
 func main() {
-	base := filepath.Base(os.Args[0])
-	name := strings.TrimSuffix(base, ".exe")
-	if runtime.GOOS == "windows" {
-		name = strings.TrimSuffix(name, ".EXE")
+	name := shimBase(os.Args[0])
+	// "pin" is always the CLI, metadata or not, so the CLI never pays for a read.
+	// Everything else reads its metadata first: a shim is the common case and
+	// that way it costs one open instead of a stat followed by an open. Only
+	// when there is nothing usable on disk does it ask who it is, which is the
+	// path that can afford the extra syscall.
+	if !strings.EqualFold(name, "pin") {
+		if sh, err := readShimFile(name); err == nil {
+			os.Exit(runShim(sh, name, os.Args[1:]))
+		} else if !isCLIName(name) {
+			fmt.Fprintf(os.Stderr, "pin: %s: %v\n  run 'pin doctor' to rebuild shims\n", name, err)
+			os.Exit(127)
+		}
 	}
-	if isCLIName(name) {
-		os.Exit(cli(os.Args[1:]))
+	os.Exit(cli(os.Args[1:]))
+}
+
+// shimBase is filepath.Base minus the drive and extension handling this does
+// not need on the path it is called from.
+func shimBase(arg0 string) string {
+	base := arg0
+	if i := strings.LastIndexAny(base, `\/`); i >= 0 {
+		base = base[i+1:]
 	}
-	os.Exit(runShim(name, os.Args[1:]))
+	if strings.HasSuffix(base, ".exe") {
+		base = base[:len(base)-4]
+	} else if strings.HasSuffix(base, ".EXE") {
+		base = base[:len(base)-4]
+	}
+	return base
 }
 
 // isCLIName reports whether argv[0] means "the CLI" rather than "a shim".
@@ -204,15 +269,22 @@ func isCLIName(name string) bool {
 }
 
 // runShim is the hot path: one small file read, then exec.
-func runShim(name string, args []string) int {
-	sh, err := readShimFile(name)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "pin: %s: %v\n  run 'pin doctor' to rebuild shims\n", name, err)
+func runShim(sh *shimInfo, name string, args []string) int {
+	argv, env, problem := planShim(sh, name, args)
+	if problem != "" {
+		os.Stderr.WriteString(problem)
 		return 127
 	}
+	return runArgv(argv, env)
+}
 
-	var argv []string
-	env := os.Environ()
+// planShim is everything the hot path does before the handover: check that the
+// runtime and entry still exist, then build argv and env. It returns a
+// ready-to-print message instead of an error so the failure branches cost
+// nothing until they are taken, and it stops short of exec so the work can be
+// measured and tested without spawning anything.
+func planShim(sh *shimInfo, name string, args []string) (argv, env []string, problem string) {
+	env = os.Environ()
 
 	switch sh.Kind {
 	case "node":
@@ -226,12 +298,12 @@ func runShim(name string, args []string) int {
 			}
 		}
 		if _, err := os.Stat(sh.Node); err != nil {
-			fmt.Fprintf(os.Stderr, "pin: runtime for %s is gone (%s)\n  %s\n  or: pin %s -n <ver> --install\n", name, sh.Node, installHint(sh.Node, sh.Version), sh.Tool)
-			return 127
+			return nil, nil, "pin: runtime for " + name + " is gone (" + sh.Node + ")\n  " +
+				installHint(sh.Node, sh.Version) + "\n  or: pin " + sh.Tool + " -n <ver> --install\n"
 		}
 		if _, err := os.Stat(sh.Entry); err != nil {
-			fmt.Fprintf(os.Stderr, "pin: entry for %s is gone (%s)\n  fix: pin rm %s && pin add ...\n", name, sh.Entry, sh.Tool)
-			return 127
+			return nil, nil, "pin: entry for " + name + " is gone (" + sh.Entry + ")\n  fix: pin rm " +
+				sh.Tool + " && pin add ...\n"
 		}
 		// The entry always runs on the pinned runtime (argv[0] is absolute).
 		// Child processes are a different question: tools like ni/npm/pnpm only
@@ -239,10 +311,11 @@ func runShim(name string, args []string) int {
 		// version manager put on PATH must win. Append as a fallback instead of
 		// prepending, and let PIN_STRICT_RUNTIME=1 restore the old behaviour for
 		// tools that must stay on their own npm/node.
+		dir := dirOf(sh.Node)
 		if os.Getenv("PIN_STRICT_RUNTIME") != "" {
-			env = prependPath(env, filepath.Dir(sh.Node))
+			env = prependPath(env, dir)
 		} else {
-			env = appendPath(env, filepath.Dir(sh.Node))
+			env = appendPath(env, dir)
 		}
 		argv = append([]string{sh.Node, sh.Entry}, args...)
 	case "cmd":
@@ -254,14 +327,23 @@ func runShim(name string, args []string) int {
 	default: // direct
 		argv = append([]string{sh.Entry}, args...)
 	}
-	return runArgv(argv, env)
+	return argv, env, ""
+}
+
+// dirOf is filepath.Dir for an absolute path that is already clean, which is
+// what a shim stores: Dir re-runs Clean and allocates, and this runs before
+// every invocation of a pinned tool.
+func dirOf(p string) string {
+	if i := strings.LastIndexByte(p, os.PathSeparator); i > 0 {
+		return p[:i]
+	}
+	return "."
 }
 
 func prependPath(env []string, dir string) []string {
-	sep := string(os.PathListSeparator)
 	for i, kv := range env {
 		if len(kv) > 5 && strings.EqualFold(kv[:5], "PATH=") {
-			env[i] = kv[:5] + dir + sep + kv[5:]
+			env[i] = kv[:5] + dir + pathSep + kv[5:]
 			return env
 		}
 	}
@@ -271,14 +353,13 @@ func prependPath(env []string, dir string) []string {
 // appendPath puts dir last on PATH: it only answers when nothing earlier in
 // PATH provides that executable, so the project's own runtime keeps priority.
 func appendPath(env []string, dir string) []string {
-	sep := string(os.PathListSeparator)
 	for i, kv := range env {
 		if len(kv) > 5 && strings.EqualFold(kv[:5], "PATH=") {
 			rest := kv[5:]
 			if rest == "" {
 				env[i] = kv[:5] + dir
 			} else {
-				env[i] = kv + sep + dir
+				env[i] = kv + pathSep + dir
 			}
 			return env
 		}

@@ -41,6 +41,39 @@ func TestShimFileTooLarge(t *testing.T) {
 	}
 }
 
+// Shims written before the version line existed, files that lost their trailing
+// newline, and metadata that went through a Windows editor all have to keep
+// working: this file is read before every invocation of a pinned tool.
+func TestShimFileToleratedShapes(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		ver  string
+	}{
+		{"five lines", "pin1\nnode\n/n/node\n/e.js\nni\n", ""},
+		{"no trailing newline", "pin1\nnode\n/n/node\n/e.js\nni", ""},
+		{"crlf", "pin1\r\nnode\r\n/n/node\r\n/e.js\r\nni\r\n20.20.2\r\n", "20.20.2"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("PIN_HOME", t.TempDir())
+			if err := os.MkdirAll(toolsDir(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(shimPath("ni"), []byte(c.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sh, err := readShimFile("ni")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sh.Kind != "node" || sh.Node != "/n/node" || sh.Entry != "/e.js" || sh.Tool != "ni" || sh.Version != c.ver {
+				t.Fatalf("got %+v", *sh)
+			}
+		})
+	}
+}
+
 // Anything that is not a shim still gets the same clear answer.
 func TestShimFileCorrupt(t *testing.T) {
 	t.Setenv("PIN_HOME", t.TempDir())
