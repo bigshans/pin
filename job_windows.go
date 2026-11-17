@@ -5,6 +5,8 @@ package main
 import (
 	"errors"
 	"os"
+	"syscall"
+	"unsafe"
 )
 
 // A job object is how Windows expresses "this process and everything it
@@ -61,6 +63,64 @@ type job struct {
 	h uintptr
 }
 
+// kernel32 entry points, resolved once. syscall.NewLazyDLL is the zero-dependency
+// way in: no cgo, no golang.org/x/sys/windows.
+var (
+	kernel32                     = syscall.NewLazyDLL("kernel32.dll")
+	procCreateJobObjectW         = kernel32.NewProc("CreateJobObjectW")
+	procSetInformationJobObject  = kernel32.NewProc("SetInformationJobObject")
+	procAssignProcessToJobObject = kernel32.NewProc("AssignProcessToJobObject")
+	procTerminateJobObject       = kernel32.NewProc("TerminateJobObject")
+	procCloseHandle              = kernel32.NewProc("CloseHandle")
+)
+
+// Values straight out of the Windows SDK headers; syscall does not export them.
+const (
+	jobObjectExtendedLimitInformation = 9      // JOBOBJECTINFOCLASS
+	jobObjectLimitKillOnJobClose      = 0x2000 // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	processSetQuota                   = 0x0100 // PROCESS_SET_QUOTA
+	processTerminate                  = 0x0001 // PROCESS_TERMINATE
+)
+
+// The C structs, field for field, in declaration order. Only LimitFlags is set;
+// everything else stays zero. Go's rules happen to produce the same padding as
+// MSVC here, but the assertion at the bottom is what actually holds us to it.
+type ioCounters struct {
+	ReadOperationCount  uint64
+	WriteOperationCount uint64
+	OtherOperationCount uint64
+	ReadTransferCount   uint64
+	WriteTransferCount  uint64
+	OtherTransferCount  uint64
+}
+
+type basicLimitInformation struct {
+	PerProcessUserTimeLimit int64
+	PerJobUserTimeLimit     int64
+	LimitFlags              uint32
+	MinimumWorkingSetSize   uintptr // 8-byte aligned: the uint32 above leaves a hole
+	MaximumWorkingSetSize   uintptr
+	ActiveProcessLimit      uint32
+	Affinity                uintptr // same hole again
+	PriorityClass           uint32
+	SchedulingClass         uint32
+}
+
+type extendedLimitInformation struct {
+	BasicLimitInformation basicLimitInformation
+	IoInfo                ioCounters
+	ProcessMemoryLimit    uintptr
+	JobMemoryLimit        uintptr
+	PeakProcessMemoryUsed uintptr
+	PeakJobMemoryUsed     uintptr
+}
+
+// Compile-time proof that the Go struct matches the C layout on 64-bit. If you
+// change a field type or order, this stops building instead of silently telling
+// the kernel the wrong thing.
+var _ [144 - int(unsafe.Sizeof(extendedLimitInformation{}))]byte
+var _ [int(unsafe.Sizeof(extendedLimitInformation{})) - 144]byte
+
 var errJobUnsupported = errors.New("job objects are not implemented yet")
 
 // newKillOnCloseJob creates an unnamed job with KILL_ON_JOB_CLOSE set.
@@ -89,4 +149,9 @@ func (j *job) terminate() error {
 // close releases the handle. The processes are already gone by then; if any
 // survived (a tool that daemonised) this is what kills them.
 func (j *job) close() {
+	if j == nil || j.h == 0 {
+		return
+	}
+	procCloseHandle.Call(j.h)
+	j.h = 0
 }
