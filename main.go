@@ -21,10 +21,10 @@ import (
 	"strings"
 )
 
-const (
-	version   = "0.1.0"
-	shimMagic = "pin1"
-)
+// version is overridden at build time with -X main.version.
+var version = "0.1.0"
+
+const shimMagic = "pin1"
 
 type Entry struct {
 	Spec     string   `json:"spec"`
@@ -128,10 +128,20 @@ func main() {
 	if runtime.GOOS == "windows" {
 		name = strings.TrimSuffix(name, ".EXE")
 	}
-	if name == "pin" {
+	if isCLIName(name) {
 		os.Exit(cli(os.Args[1:]))
 	}
 	os.Exit(runShim(name, os.Args[1:]))
+}
+
+// isCLIName reports whether argv[0] means "the CLI" rather than "a shim".
+// Release artifacts are named pin-linux-amd64 and friends, and those should
+// still behave like the CLI.
+func isCLIName(name string) bool {
+	if name == "pin" {
+		return true
+	}
+	return strings.HasPrefix(name, "pin-") || strings.HasPrefix(name, "pin_")
 }
 
 // runShim is the hot path: one small file read, then exec.

@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PIN_HOME="${PIN_HOME:-$HOME/.pin}"
-LDFLAGS="-s -w"
+VERSION="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+LDFLAGS="-s -w -X main.version=$VERSION"
 export CGO_ENABLED=0
 mkdir -p dist
 
@@ -34,6 +35,7 @@ build windows arm64 pin-windows-arm64.exe
 build darwin  arm64 pin-darwin-arm64
 
 if command -v sha256sum >/dev/null; then
-  (cd dist && sha256sum ./* > SHA256SUMS)
+  # Only the binaries, not a previous SHA256SUMS (glob order would include it).
+  (cd dist && rm -f SHA256SUMS && sha256sum pin-* > SHA256SUMS)
 fi
 ls -l dist

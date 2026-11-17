@@ -11,9 +11,20 @@ $ fnm use 14            # this shell is Node 14
 $ ni -v                 # ni still runs on the Node 20 it was pinned to
 ```
 
-## Requirements
+## Install
+Prebuilt binaries live in [Releases](https://github.com/bigshans/pin/releases); verify them with `SHA256SUMS`.
 
-Go 1.21 or newer, no third-party dependencies. Node comes from whatever version manager you already use (fnm, nvm, mise, asdf, proto, vfox and volta are all recognised); `pin` never downloads anything itself.
+```bash
+# linux amd64
+mkdir -p ~/.pin/bin
+curl -L -o ~/.pin/bin/pin \
+  https://github.com/bigshans/pin/releases/latest/download/pin-linux-amd64
+chmod +x ~/.pin/bin/pin
+```
+
+On Windows grab `pin-windows-amd64.exe`, rename it to `pin.exe` and drop it in `%USERPROFILE%\.pin\bin`.
+
+Building from source needs Go 1.21 or newer and no third-party dependencies:
 
 ```bash
 git clone git@github.com:bigshans/pin.git
@@ -22,6 +33,8 @@ cd pin
 ```
 
 Add `~/.pin/bin` (`%USERPROFILE%\.pin\bin` on Windows) to your PATH, ahead of your version manager. `pin` and every pinned command then come from that one directory.
+
+Node comes from whatever version manager you already use (fnm, nvm, mise, asdf, proto, vfox and volta are all recognised); `pin` never downloads anything itself.
 
 ## Usage
 

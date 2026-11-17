@@ -11,9 +11,20 @@ $ fnm use 14            # 当前 shell 是 Node 14
 $ ni -v                 # ni 仍然用安装时选定的 Node 20 跑
 ```
 
-## 要求
+## 安装
+预编译二进制在 [Releases](https://github.com/bigshans/pin/releases) 里，可用 `SHA256SUMS` 校验：
 
-Go 1.21 以上，无第三方依赖。Node 由你已有的版本管理器提供（fnm、nvm、mise、asdf、proto、vfox、volta 都可以），`pin` 自己不做下载。
+```bash
+# linux amd64
+mkdir -p ~/.pin/bin
+curl -L -o ~/.pin/bin/pin \
+  https://github.com/bigshans/pin/releases/latest/download/pin-linux-amd64
+chmod +x ~/.pin/bin/pin
+```
+
+Windows 下载 `pin-windows-amd64.exe`，改名成 `pin.exe`，放进 `%USERPROFILE%\.pin\bin`。
+
+从源码编译需要 Go 1.21 以上，无第三方依赖：
 
 ```bash
 git clone git@github.com:bigshans/pin.git
@@ -22,6 +33,8 @@ cd pin
 ```
 
 然后把 `~/.pin/bin`（Windows 是 `%USERPROFILE%\.pin\bin`）加到 PATH 里，位置要在版本管理器之前。之后 `pin` 和所有被钉住的命令都从这个目录来。
+
+Node 由你已有的版本管理器提供（fnm、nvm、mise、asdf、proto、vfox、volta 都可以），`pin` 自己不做下载。
 
 ## 用法
 
