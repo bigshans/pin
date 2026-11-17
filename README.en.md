@@ -57,11 +57,13 @@ eval "$(pin completion zsh)"
 pin completion fish | source
 ```
 
-PowerShell, in `$PROFILE`:
+PowerShell has no `complete` builtin (that is a bash thing); it uses `Register-ArgumentCompleter`, so append the generated line to your `$PROFILE`:
 
 ```powershell
-pin completion powershell | Out-String | Invoke-Expression
+Add-Content $PROFILE 'pin completion powershell | Out-String | Invoke-Expression'
 ```
+
+Then open a new pwsh window. Completion comes from `Register-ArgumentCompleter -Native` and covers `pin <TAB>`, `pin -n <TAB>`, `pin r <TAB>` and `pin completion <TAB>`.
 
 ## Where the runtime comes from
 

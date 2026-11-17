@@ -19,6 +19,9 @@ var verbs = []string{
 
 var flags = []string{"-n", "--node", "--runtime", "--install", "--fix"}
 
+// shells are the argument values accepted by `pin completion`.
+var shells = []string{"bash", "zsh", "fish", "powershell"}
+
 // runtimeNames returns every installed runtime version, across all managers.
 func runtimeNames() []string {
 	seen := map[string]bool{}
@@ -118,6 +121,8 @@ func candidates(words []string) []string {
 		return filterPrefix(pinnedNames(), last)
 	case "d", "doctor":
 		return filterPrefix([]string{"--fix"}, last)
+	case "completion":
+		return filterPrefix(shells, last)
 	}
 	return nil
 }
@@ -142,7 +147,7 @@ func cmdComplete(args []string) int {
 
 func cmdCompletion(args []string) int {
 	if len(args) != 1 {
-		fmt.Fprintln(os.Stderr, "usage: pin completion <bash|zsh|fish|powershell>")
+		fmt.Fprintf(os.Stderr, "usage: pin completion <%s>\n", strings.Join(shells, "|"))
 		return 2
 	}
 	var body string

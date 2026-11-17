@@ -57,11 +57,13 @@ eval "$(pin completion zsh)"
 pin completion fish | source
 ```
 
-PowerShell，写进 `$PROFILE`：
+PowerShell 没有 `complete` 这种内建命令（那是 bash 的），走 `Register-ArgumentCompleter`，把生成的一行追加到 `$PROFILE` 即可：
 
 ```powershell
-pin completion powershell | Out-String | Invoke-Expression
+Add-Content $PROFILE 'pin completion powershell | Out-String | Invoke-Expression'
 ```
+
+然后重开一个 pwsh 窗口。补全由 PowerShell 的 `Register-ArgumentCompleter -Native` 提供，`pin <TAB>`、`pin -n <TAB>`、`pin r <TAB>`、`pin completion <TAB>` 都能用。
 
 ## Node 运行时从哪来
 
