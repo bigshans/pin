@@ -35,11 +35,15 @@ uninstalls a version; the build stamp is what lets `pin doctor` notice that the
 binary was replaced (a rebuild creates a new inode and leaves every shim behind,
 indistinguishable from a copy).
 
-Everything the shim does before the handover: one read (5 syscalls, 17
-allocations total, ~4µs). On Linux and macOS it `exec`s, so no extra process
-exists; Windows has no `exec`, so it starts a child inside a job object — the
-child and everything it spawns die with the shim, and Ctrl+C is passed through
-rather than swallowed.
+Everything the shim does before the handover: four syscalls (open, read, close,
+and one access check), nine allocations, ~3µs. On Linux and macOS it `exec`s, so
+no extra process exists; Windows has no `exec`, so it starts a child inside a job
+object — the child and everything it spawns die with the shim, and Ctrl+C is
+passed through rather than swallowed.
+
+Nothing is checked before it is tried: the runtime is not stat'ed, the handover
+is the test. If it fails with "not found", the shim re-finds the version label,
+rewrites itself, and tries once more.
 
 All shims are hard links to one file, so ten pinned commands cost one 3MB copy on
 disk, not ten.
@@ -81,6 +85,15 @@ provides node.
 The reverse need — a tool whose own child processes must stay on the pinned
 runtime (native modules, wrappers that spawn node) — is `PIN_STRICT_RUNTIME=1`,
 which prepends instead.
+
+## No encoding/json
+
+The registry and the `version` / `bin` members of a package.json go through
+`json.go`, about 200 lines of strict reader and writer. `encoding/json` costs
+900KB in a Go binary — a third of the file, because the v2 implementation pulls
+`reflect` and its own machinery in — for two field types and one small file.
+Speed is the same argument: the binary is smaller, so it faults in fewer pages
+before reaching `exec`.
 
 ## Where packages come from
 
@@ -142,12 +155,22 @@ Windows 11, Node 20.20.2, 30 runs each after a warm-up:
 | reference: `cmd /c echo hi` (process creation only) | 25.5 ms |
 | reference: `pin v` (one pin startup) | 26.6 ms |
 
-Linux, same measurement: `nuxt --version` through a shim 49.9 ms against 48.7 ms
-for the identical node and entry invoked directly — the shim is ~1.2 ms, of which
-~4 µs is its own code, and the rest is Go's runtime starting.
+Linux, CPU time per invocation, minimum of five rounds of 100:
 
-That is the whole cost model: the process handover, not the code. Anything that
-matters is inside node's own startup.
+| | |
+|---|---|
+| `fork` + `exec` of `/bin/true` (the floor) | 0.31 ms |
+| a 17KB C program doing the same work as a shim | 0.51 ms |
+| an empty Go `main() {}` | 1.07 ms |
+| the pin shim | 1.47 ms |
+
+Read that table as a budget, not as a benchmark of the code. The shim's own work
+is ~3µs; the rest of the 1.16ms it costs above `/bin/true` is Go's runtime
+starting and the pages of a 2.2MB binary being faulted in. That is why the JSON
+reader exists — 900KB of binary is 900KB of pages to touch before `exec`.
+
+End to end it is noise: `nuxt --version` through a shim is 55.6ms against 56.3ms
+for the 3MB build, and node itself is 50 of those milliseconds.
 
 ## Environment
 

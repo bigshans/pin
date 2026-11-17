@@ -34,7 +34,7 @@ build by hand.
 | `pin-windows-arm64.exe` | |
 | `pin-darwin-arm64` | |
 
-Artifacts are ~3MB, statically linked, `CGO_ENABLED=0`, built with
+Artifacts are ~2.2MB, statically linked, `CGO_ENABLED=0`, built with
 `-trimpath -ldflags "-s -w -X main.version=$(git describe …)"`.
 
 ## Releasing

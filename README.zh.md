@@ -80,4 +80,4 @@ pin completion fish | source     # 写进 ~/.config/fish/config.fish
 | [构建](docs/build.zh.md) | 从源码编译、交叉编译、发布产物 |
 | [English](README.md) | English docs |
 
-MIT · 本体约 2200 行 Go，单个二进制，无下载器，无后台进程。
+MIT · 本体约 2900 行 Go，单个二进制，无下载器，无后台进程。

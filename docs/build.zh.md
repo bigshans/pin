@@ -26,7 +26,7 @@ shim 是硬链接，所以**每次重建都要重链**：`go build -o` 写的是
 | `pin-windows-arm64.exe` | |
 | `pin-darwin-arm64` | |
 
-产物约 3MB，静态链接，`CGO_ENABLED=0`，用 `-trimpath -ldflags "-s -w -X main.version=$(git describe …)"` 构建。
+产物约 2.2MB，静态链接，`CGO_ENABLED=0`，用 `-trimpath -ldflags "-s -w -X main.version=$(git describe …)"` 构建。
 
 ## 发版
 

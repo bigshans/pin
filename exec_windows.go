@@ -3,7 +3,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -36,7 +38,7 @@ const graceInterrupts = 5 * time.Second
 // broadcasts. The job covers the cases where nothing is left to broadcast: pin
 // killed from Task Manager, or the terminal window closed, where Windows closes
 // our handles for us. KILL_ON_JOB_CLOSE then takes the whole tree down.
-func runArgv(argv []string, env []string) int {
+func runArgv(argv []string, env []string) (int, bool) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Env = env
 	cmd.Stdin = os.Stdin
@@ -52,8 +54,11 @@ func runArgv(argv []string, env []string) int {
 		if j != nil {
 			j.close()
 		}
+		if errors.Is(err, fs.ErrNotExist) {
+			return 0, false
+		}
 		os.Stderr.WriteString("pin: " + err.Error() + "\n")
-		return 126
+		return 126, true
 	}
 	if jerr != nil {
 		j = nil
@@ -80,17 +85,17 @@ func runArgv(argv []string, env []string) int {
 	for {
 		select {
 		case err := <-done:
-			return exitCode(err)
+			return exitCode(err), true
 		case <-interrupts:
 			if deadline != nil {
 				// Second Ctrl+C: the child is not going to stop on its own.
-				return killAndReap(cmd, done, j)
+				return killAndReap(cmd, done, j), true
 			}
 			t := time.NewTimer(graceInterrupts)
 			defer t.Stop()
 			deadline = t.C
 		case <-deadline:
-			return killAndReap(cmd, done, j)
+			return killAndReap(cmd, done, j), true
 		}
 	}
 }

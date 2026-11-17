@@ -9,10 +9,8 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -73,32 +71,6 @@ func pkgDir(k string) string {
 }
 
 // ---------- registry ----------
-
-func loadDB() (map[string]Entry, error) {
-	b, err := os.ReadFile(dbPath())
-	if errors.Is(err, os.ErrNotExist) {
-		return map[string]Entry{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	m := map[string]Entry{}
-	if err := json.Unmarshal(b, &m); err != nil {
-		return nil, err
-	}
-	return m, nil
-}
-
-func saveDB(m map[string]Entry) error {
-	if err := os.MkdirAll(pinHome(), 0o755); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeFileAtomic(dbPath(), b, 0o644)
-}
 
 // writeFileAtomic replaces path with data so that an interrupted write leaves
 // either the old file or the new one, never a truncated one. This file is the
@@ -167,16 +139,11 @@ const maxShimFile = 4 << 10
 var shimBuf [maxShimFile]byte
 
 func readShimFile(bin string) (*shimInfo, error) {
-	f, err := os.Open(shimPath(bin))
-	if err != nil {
-		return nil, err
-	}
 	// A regular file returns everything asked for unless it hits EOF, so one
 	// read is enough for six short lines and saves the extra read + fstat that
 	// io.ReadAll and os.ReadFile each spend sizing the buffer.
-	n, rerr := f.Read(shimBuf[:])
-	f.Close()
-	if rerr != nil && rerr != io.EOF {
+	n, rerr := readSmallFile(shimPath(bin), shimBuf[:])
+	if rerr != nil {
 		return nil, rerr
 	}
 	if n == len(shimBuf) {
@@ -270,14 +237,46 @@ func isCLIName(name string) bool {
 	return strings.HasPrefix(strings.ToLower(name), "pin")
 }
 
-// runShim is the hot path: one small file read, then exec.
+// runShim is the hot path: one small file read, then exec. Anything that can go
+// wrong is discovered by trying, not by checking first, so the working case pays
+// for nothing.
 func runShim(sh *shimInfo, name string, args []string) int {
-	argv, env, problem := planShim(sh, name, args)
-	if problem != "" {
-		os.Stderr.WriteString(problem)
-		return 127
+	for attempt := 0; ; attempt++ {
+		argv, env, problem := planShim(sh, name, args)
+		if problem != "" {
+			os.Stderr.WriteString(problem)
+			return 127
+		}
+		rc, started := runArgv(argv, env)
+		if started || attempt > 0 {
+			return rc
+		}
+		// The runtime was not there. A manager may have moved the same version
+		// somewhere else: find it, rewrite the shim, and try once more.
+		np, healed := healRuntime(sh, name)
+		if !healed {
+			os.Stderr.WriteString("pin: runtime for " + name + " is gone (" + sh.Node + ")\n  " +
+				installHint(sh.Node, sh.Version) + "\n  or: pin " + sh.Tool + " -n <ver> --install\n")
+			return 127
+		}
+		sh.Node = np
 	}
-	return runArgv(argv, env)
+}
+
+// healRuntime re-finds the runtime a shim was bound to after the path vanished.
+func healRuntime(sh *shimInfo, name string) (string, bool) {
+	if fileExists(sh.Node) {
+		return "", false // it is there; whatever failed was not the handover
+	}
+	if sh.Version == "" {
+		return "", false
+	}
+	_, np, ok := findRuntimeByVersion(sh.Version)
+	if !ok {
+		return "", false
+	}
+	_ = writeShimFile(name, sh.Kind, np, sh.Entry, sh.Tool, sh.Version)
+	return np, true
 }
 
 // planShim is everything the hot path does before the handover: check that the
@@ -290,20 +289,10 @@ func planShim(sh *shimInfo, name string, args []string) (argv, env []string, pro
 
 	switch sh.Kind {
 	case "node":
-		if _, err := os.Stat(sh.Node); err != nil && sh.Version != "" {
-			// The runtime vanished (manager upgrade / uninstall). Try to find the
-			// same version elsewhere and rewrite the shim, so users do not have
-			// to reinstall just because a path moved.
-			if _, np, ok := findRuntimeByVersion(sh.Version); ok {
-				sh.Node = np
-				_ = writeShimFile(name, sh.Kind, np, sh.Entry, sh.Tool, sh.Version)
-			}
-		}
-		if _, err := os.Stat(sh.Node); err != nil {
-			return nil, nil, "pin: runtime for " + name + " is gone (" + sh.Node + ")\n  " +
-				installHint(sh.Node, sh.Version) + "\n  or: pin " + sh.Tool + " -n <ver> --install\n"
-		}
-		if _, err := os.Stat(sh.Entry); err != nil {
+		// The runtime is not stat'ed here on purpose: the handover is the test.
+		// If node is gone the exec fails with ENOENT and runShim heals from
+		// there, which keeps the healthy path down to one syscall.
+		if !fileExists(sh.Entry) {
 			return nil, nil, "pin: entry for " + name + " is gone (" + sh.Entry + ")\n  fix: pin rm " +
 				sh.Tool + " && pin add ...\n"
 		}
@@ -357,6 +346,11 @@ func prependPath(env []string, dir string) []string {
 func appendPath(env []string, dir string) []string {
 	for i, kv := range env {
 		if len(kv) > 5 && strings.EqualFold(kv[:5], "PATH=") {
+			if strings.Contains(kv[5:], dir) {
+				// Already reachable: appending would only duplicate the entry and
+				// copy a kilobyte of PATH to say so.
+				return env
+			}
 			rest := kv[5:]
 			if rest == "" {
 				env[i] = kv[:5] + dir
@@ -1214,15 +1208,12 @@ func installAndShim(spec, key, pm, nodePath, rtLabel string, prev Entry) (Entry,
 	if err != nil {
 		return Entry{}, fmt.Errorf("cannot read %s/package.json", instDir)
 	}
-	var meta struct {
-		Version string          `json:"version"`
-		Bin     json.RawMessage `json:"bin"`
-	}
-	if err := json.Unmarshal(pj, &meta); err != nil {
-		return Entry{}, err
+	meta, err := readPkgMeta(pj)
+	if err != nil {
+		return Entry{}, fmt.Errorf("cannot parse %s/package.json: %v", instDir, err)
 	}
 
-	bins := parseBins(pkgName, meta.Bin)
+	bins := meta.bins(pkgName)
 	if len(bins) == 0 {
 		return Entry{}, fmt.Errorf("%s publishes no bin, nothing to pin", pkgName)
 	}
@@ -1378,28 +1369,6 @@ func cmdUpdate(args []string) int {
 		fmt.Printf("  %s %s → %s\n", key, ne.Version, strings.Join(ne.Bins, ", "))
 	}
 	return rc
-}
-
-func parseBins(pkgName string, raw json.RawMessage) map[string]string {
-	out := map[string]string{}
-	s := strings.TrimSpace(string(raw))
-	if s == "" || s == "null" {
-		return out
-	}
-	if strings.HasPrefix(s, `"`) {
-		var one string
-		if json.Unmarshal(raw, &one) == nil && one != "" {
-			out[toolKey(pkgName)] = one
-		}
-		return out
-	}
-	m := map[string]string{}
-	if json.Unmarshal(raw, &m) == nil {
-		for k, v := range m {
-			out[k] = v
-		}
-	}
-	return out
 }
 
 func kindOf(entry string) string {

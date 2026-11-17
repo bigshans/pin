@@ -28,7 +28,9 @@ ni
 
 依次是 kind · node · 入口 · 所属包 · runtime 版本 · 写这个文件的 pin 构建。runtime 版本让 shim 在管理器搬走或卸载某个版本时能自愈；最后那个构建戳是 `pin doctor` 判断「二进制被换过」的依据 —— 重新构建会产生新 inode，把所有 shim 留在旧文件上，从 stat 上跟拷贝分辨不出来。
 
-shim 在交接之前要做的事：一次 read（总共 5 个 syscall、17 次分配、约 4µs）。Linux 和 macOS 上它直接 `exec`，不会多出一个进程；Windows 没有 `exec`，就起一个子进程并放进 job object —— 子进程和它派生的一切跟着 shim 一起死，Ctrl+C 是透传而不是被吃掉。
+shim 在交接之前要做的事：4 个 syscall（open、read、close，加一次 access 检查）、9 次分配、约 3µs。Linux 和 macOS 上它直接 `exec`，不会多出一个进程；Windows 没有 `exec`，就起一个子进程并放进 job object —— 子进程和它派生的一切跟着 shim 一起死，Ctrl+C 是透传而不是被吃掉。
+
+不做任何"先检查再动作"：runtime 不 stat，交接本身就是检验。失败且错误是"文件不存在"时，shim 按记录的版本号重新找一次、改写自己、再试一次。
 
 所有 shim 都是指向同一个文件的硬链接，所以十个钉住的命令在磁盘上只占一份 3MB，不是十份。
 
@@ -57,6 +59,10 @@ node 路径是绝对路径存下来的，所以绑定不依赖 PATH、不依赖�
 `ni`、`nr`、`npm run` 这类工具只是把活交给项目自己的包管理器，所以 shell 的版本管理器放在 PATH 上的那个 node 必须优先 —— 否则在 Node 14 的仓库里 `nr test` 会用 Node 20 跑测试。因此 runtime 目录是**追加**到 PATH 末尾的，只在别处都没有 node 时才兜底。
 
 反过来的需求 —— 工具自己的子进程必须跟着钉住的 runtime 走（原生模块、内部再起 node 的包装器）—— 是 `PIN_STRICT_RUNTIME=1`，它会改成放到 PATH 最前。
+
+## 为什么不用 encoding/json
+
+注册表、以及 package.json 里的 `version` / `bin`，都走 `json.go` —— 约 200 行的严格读写器。`encoding/json` 在一个 Go 二进制里要占 900KB（三分之一），因为 v2 实现会把 `reflect` 和它自己的一整套机制拖进来，而 pin 只需要两种字段类型和一个小文件。速度上也是同一个道理：二进制更小，`exec` 之前要触碰的页更少。
 
 ## 包从哪来
 
@@ -105,9 +111,18 @@ Windows 11，Node 20.20.2，各跑 30 次取均值（先预热）：
 | 参考：`cmd /c echo hi`（纯进程创建） | 25.5 ms |
 | 参考：`pin v`（pin 启动一次） | 26.6 ms |
 
-Linux 上同样的测法：`nuxt --version` 经 shim 49.9 ms，用完全相同的 node 和入口直接调是 48.7 ms —— shim 约 1.2 ms，其中约 4µs 是它自己的代码，其余是 Go 运行时启动。
+Linux，每次调用的 CPU 时间，5 轮 × 100 次取最小值：
 
-这就是全部的成本模型：贵的是进程交接，不是代码。真正占大头的是 node 自己的启动。
+| | |
+|---|---|
+| `/bin/true` 的 `fork` + `exec`（地板） | 0.31 ms |
+| 一个 17KB 的 C 程序，做和 shim 一样的事 | 0.51 ms |
+| 空 `main() {}` 的 Go 二进制 | 1.07 ms |
+| pin 的 shim | 1.47 ms |
+
+这张表要当预算看，不是代码的跑分。shim 自己的活约 3µs；它比 `/bin/true` 多出来的 1.16ms 里，绝大部分是 Go 运行时启动，以及 2.2MB 二进制的页被触碰。写 JSON 读取器的理由也在这 —— 900KB 的二进制就是 `exec` 之前要多碰的 900KB 页。
+
+端到端上是噪声：`nuxt --version` 经 shim 55.6ms，3MB 那版是 56.3ms，其中 50ms 是 node 自己。
 
 ## 环境变量
 
