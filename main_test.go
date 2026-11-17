@@ -202,7 +202,7 @@ func TestRebind(t *testing.T) {
 	db := map[string]Entry{"ni": {
 		Spec: "@antfu/ni", Runtime: "20.0.0", NodePath: oldNode, Bins: []string{"nr", "nf"}, PM: "npm",
 	}}
-	if err := rebind("ni", db["ni"], newNode, "22.0.0", pkgDir("ni"), db); err != nil {
+	if err := rebind("ni", db["ni"], newNode, "22.0.0", db); err != nil {
 		t.Fatal(err)
 	}
 

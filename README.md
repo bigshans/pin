@@ -45,7 +45,6 @@ pin -n 20 cowsay@1.6.0        # 同时指定包版本
 pin --install -n 18 cowsay    # 本机没有 Node 18，先交给版本管理器装
 pin --pm pnpm @antfu/ni       # 用 pnpm 装（npm / pnpm / yarn 三选一）
 pin -n 22 ni                  # 已钉住的包：只换 node，不重装
-pin --reinstall -n 22 ni      # 强制重装（原生模块、要顺带升级时）
 pin                           # 列出已钉住的包
 pin w ni                      # 看 ni 这个 shim 实际会执行什么
 pin r cowsay                  # 卸载，也可以用 bin 名：pin r cowthink
@@ -56,7 +55,7 @@ pin completion bash           # 输出补全脚本
 pin v
 ```
 
-对一个已经钉住的包再跑 `pin -n <ver>`，只是把它的 shim 指向另一个 node —— 入口文件没变，纯 JS 不在意谁在跑它，所以不重装、不联网，几十毫秒完成。包里有原生模块时（`.node` / `binding.gyp`）会警告一句，那种情况用 `--reinstall` 重新编译。
+对一个已经钉住的包再跑 `pin -n <ver>`，只是把它的 shim 指向另一个 node —— 入口文件没变，纯 JS 不在意谁在跑它，所以不重装、不联网，几十毫秒完成。包里有原生模块时（`.node` / `binding.gyp`）会自动改成重装，因为那份编译产物只认一个 node ABI —— 不需要你记哪个工具有编译依赖。
 
 不带 `-n` 的 `pin <pkg>` 是升级：解析依赖的新版本然后重装，但**保持原来绑定的 node**。只有显式给了 `-n`（或设了 `PIN_NODE`）才会换绑，所以同一个命令在任何 shell 里含义一致 —— 你在 node 14 的仓库里跑 `pin ni`，不会把 ni 从 20 拖到 14。
 

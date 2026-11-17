@@ -45,7 +45,6 @@ pin -n 20 cowsay@1.6.0        # package version and runtime together
 pin --install -n 18 cowsay    # Node 18 isn't installed; let the manager do it first
 pin --pm pnpm @antfu/ni       # install with pnpm (npm / pnpm / yarn)
 pin -n 22 ni                  # already pinned: just re-point it, no reinstall
-pin --reinstall -n 22 ni      # full reinstall (native modules, or a forced upgrade)
 pin                           # list pinned tools
 pin w ni                      # show what the ni shim actually executes
 pin r cowsay                  # unpin; a bin name works too: pin r cowthink
@@ -59,8 +58,8 @@ pin v
 Re-running `pin -n <ver>` on something already pinned only re-points its shims at
 another Node: the entry file does not change, plain JavaScript does not care which
 Node runs it, so it takes tens of milliseconds and no network. Packages carrying
-native code (`.node` / `binding.gyp`) get a warning, and those want `--reinstall`
-to rebuild.
+native code (`.node` / `binding.gyp`) are reinstalled instead of re-pointed, since
+that compiled output only fits one node ABI — no flag to remember.
 
 `pin <pkg>` without `-n` upgrades: it resolves newer versions and reinstalls, but
 keeps the runtime the package is already bound to. Only an explicit `-n` (or

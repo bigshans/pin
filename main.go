@@ -346,7 +346,6 @@ usage:
   pin -n <ver|dir> <pkg>   same, with a chosen runtime  (pin -n 20 @antfu/ni)
   pin --pm <name> <pkg>    install with npm, pnpm or yarn (default: npm)
   pin -n <ver> <pinned>    re-point an existing pin at another runtime, no reinstall
-  pin --reinstall <pkg>    force a full install (native modules, forced upgrade)
   pin --install -n <ver>   install the runtime first if it is missing
   pin                      list pinned tools        (= pin l)
   pin l                    list
@@ -788,13 +787,8 @@ func prevPM(e Entry) string {
 //
 // It is only sound because most CLI packages are plain JavaScript. Native
 // modules are compiled against one node ABI, so a package carrying them needs a
-// real reinstall, which is what --reinstall forces. The check below is a bounded
-// walk for .node / binding.gyp, enough to warn.
-func rebind(key string, prev Entry, nodePath, rtLabel, prefix string, db map[string]Entry) error {
-	if hasNativeModules(prefix) {
-		fmt.Fprintf(os.Stderr, "pin: warning: %s has native modules built for node %s; run with --reinstall if it fails to load\n", key, prev.Runtime)
-	}
-
+// real reinstall, which the caller decides by scanning for .node / binding.gyp.
+func rebind(key string, prev Entry, nodePath, rtLabel string, db map[string]Entry) error {
 	moved, skipped := 0, 0
 	for _, b := range prev.Bins {
 		sh, err := readShimFile(b)
@@ -916,14 +910,12 @@ func projectName(key string) string {
 func cmdAdd(args []string) int {
 	var rtFlag, pmFlag string
 	var specs []string
-	withInstall, reinstall := false, false
+	withInstall := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--install":
 			withInstall = true
-		case a == "--reinstall":
-			reinstall = true
 		case a == "-n" || a == "-r" || a == "--node" || a == "--runtime":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "pin: "+a+" needs a value (e.g. -n 20)")
@@ -1017,12 +1009,19 @@ func cmdAdd(args []string) int {
 		// Pointing an existing pin at another runtime is a path edit, not an
 		// install: pure JavaScript does not care which node runs it. Skipped
 		// when the runtime is unchanged, because then this is the upgrade path.
-		if prev, ok := db[key]; ok && !reinstall && prevPM(prev) == pm && prev.NodePath != pkgNode {
-			if err := rebind(key, prev, pkgNode, pkgLabel, prefix, db); err != nil {
-				fmt.Fprintln(os.Stderr, "pin:", err)
-				return 1
+		if prev, ok := db[key]; ok && prevPM(prev) == pm && prev.NodePath != pkgNode {
+			// Native modules are compiled against one node ABI, so those get
+			// reinstalled rather than re-pointed. Nobody should have to remember
+			// which of their tools carries a compiled dependency.
+			if hasNativeModules(prefix) {
+				fmt.Printf("   %s has native modules; reinstalling instead of re-pointing\n", key)
+			} else {
+				if err := rebind(key, prev, pkgNode, pkgLabel, db); err != nil {
+					fmt.Fprintln(os.Stderr, "pin:", err)
+					return 1
+				}
+				continue
 			}
-			continue
 		}
 		if prev, ok := db[key]; ok && prevPM(prev) != pm {
 			// A flat npm tree and a pnpm store do not mix, and a lockfile from
