@@ -33,7 +33,7 @@ cd pin
 
 然后把 `~/.pin/bin`（Windows 是 `%USERPROFILE%\.pin\bin`）加到 PATH 里，位置要在版本管理器之前。这个目录只放 shim：`pin` 自己的二进制不需要在里面 —— shim 是指向它的硬链接，两个路径在同一个文件系统上就只占一份，跨文件系统时会退化成拷贝（每个 shim 各占一份 3MB）。
 
-换了 pin 二进制之后跑一次 `pin shims` 重链全部 shim（新二进制和旧 shim 不是同一个 inode 了）；`pin doctor` 会告诉你有没有漏。
+换了 pin 二进制之后，`pin doctor` 会把每个 shim 认成旧的（元数据里记着写它的那个构建，换了构建就对不上），`pin doctor --fix` 或 `pin shims` 重链一次。`go build -o` 每次都换 inode，所以重建一次就要重链一次。
 
 Node 由你已有的版本管理器提供（fnm、nvm、mise、asdf、proto、vfox、volta 都可以），`pin` 自己不做下载。
 
@@ -53,7 +53,7 @@ pin which ni                  # 看 ni 这个 shim 实际会执行什么
 pin rm cowsay                 # 卸载，也可以用 bin 名：pin rm cowthink
 pin doctor                    # 检查 runtime、入口文件和 shim 是否都还在
 pin doctor --fix              # 检查并修复：重绑失效的 shim，删掉没有归属的 shim
-pin shims                     # 重新链接所有 shim（换过 pin 二进制之后要跑）
+pin shims                     # 重链所有 shim，等同 pin doctor --fix
 pin completion bash           # 输出补全脚本
 pin version
 ```
@@ -149,7 +149,7 @@ pin 不记「上次用的谁」：同一个命令在任何时候含义都一样�
 ```
 $PIN_HOME (默认 ~/.pin)
 ├── bin/<tool>         指向 pin 二进制的硬链接，靠 argv[0] 判断自己是谁
-├── tools/<tool>.txt   6 行纯文本：kind、node、入口、所属包、版本标签
+├── tools/<tool>.txt   7 行纯文本：kind、node、入口、所属包、runtime 版本、写它的 pin 构建
 ├── pkgs/<name>/       npm install -g --prefix 的安装目录
 └── pins.json          注册表，只有 CLI 读，shim 不读
 ```

@@ -17,7 +17,7 @@ func TestShimFileRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := shimInfo{Kind: "node", Node: `C:\node\node.exe`, Entry: `C:\pkgs\ni\bin\ni.mjs`, Tool: "ni", Version: "20.20.2"}
+	want := shimInfo{Kind: "node", Node: `C:\node\node.exe`, Entry: `C:\pkgs\ni\bin\ni.mjs`, Tool: "ni", Version: "20.20.2", Pin: version}
 	if *got != want {
 		t.Fatalf("got %+v, want %+v", *got, want)
 	}
@@ -69,6 +69,50 @@ func TestShimFileToleratedShapes(t *testing.T) {
 			}
 			if sh.Kind != "node" || sh.Node != "/n/node" || sh.Entry != "/e.js" || sh.Tool != "ni" || sh.Version != c.ver {
 				t.Fatalf("got %+v", *sh)
+			}
+		})
+	}
+}
+
+// A shim belongs to this binary either because it is a hard link to it or, when
+// the filesystem forced a copy, because the same build wrote it. Anything else is
+// a leftover from a replaced binary and has to be relinked.
+func TestShimCurrent(t *testing.T) {
+	dir := t.TempDir()
+	self := filepath.Join(dir, "pin")
+	if err := os.WriteFile(self, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "shim-link")
+	if err := os.Link(self, link); err != nil {
+		t.Fatal(err)
+	}
+	copyPath := filepath.Join(dir, "shim-copy")
+	if err := os.WriteFile(copyPath, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	selfInfo, err := os.Stat(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkInfo, _ := os.Stat(link)
+	copyInfo, _ := os.Stat(copyPath)
+
+	cases := []struct {
+		name string
+		sh   *shimInfo
+		link os.FileInfo
+		want bool
+	}{
+		{"hard link to this binary", &shimInfo{Pin: "0.9.9"}, linkInfo, true},
+		{"copy from this build", &shimInfo{Pin: version}, copyInfo, true},
+		{"copy from another build", &shimInfo{Pin: "0.1.0"}, copyInfo, false},
+		{"link with no build recorded", &shimInfo{}, copyInfo, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := shimCurrent(c.sh, c.link, selfInfo); got != c.want {
+				t.Fatalf("shimCurrent = %v, want %v", got, c.want)
 			}
 		})
 	}

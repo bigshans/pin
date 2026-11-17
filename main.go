@@ -137,6 +137,7 @@ type shimInfo struct {
 	Entry   string
 	Tool    string
 	Version string // runtime version label ("20.20.2"); lets a shim heal itself
+	Pin     string // pin build that wrote this file ("0.2.0-2-gfd04ac8")
 }
 
 func shimPath(bin string) string {
@@ -147,7 +148,7 @@ func writeShimFile(bin, kind, node, entry, tool, ver string) error {
 	if err := os.MkdirAll(toolsDir(), 0o755); err != nil {
 		return err
 	}
-	body := strings.Join([]string{shimMagic, kind, node, entry, tool, ver}, "\n") + "\n"
+	body := strings.Join([]string{shimMagic, kind, node, entry, tool, ver, version}, "\n") + "\n"
 	return writeFileAtomic(shimPath(bin), []byte(body), 0o644)
 }
 
@@ -186,31 +187,32 @@ func readShimFile(bin string) (*shimInfo, error) {
 	// only allocation is the string over the buffer. The last line may be cut
 	// short by EOF: earlier versions wrote five lines with no version.
 	s := string(shimBuf[:n])
-	var f6 [6]string
-	for i := 0; i < 5; i++ {
+	var f7 [7]string
+	for i := 0; i < 6; i++ {
 		j := strings.IndexByte(s, '\n')
 		if j < 0 {
+			// The file may stop early: five lines (no runtime version, older
+			// versions) or six (no pin build). Only the first four are required.
 			if i < 4 {
 				return nil, fmt.Errorf("corrupt shim for %q", bin)
 			}
-			j = len(s)
-		}
-		f6[i] = strings.TrimSuffix(s[:j], "\r")
-		if j == len(s) {
+			f7[i] = strings.TrimSpace(strings.TrimSuffix(s, "\r"))
 			s = ""
 			break
 		}
+		f7[i] = strings.TrimSuffix(s[:j], "\r")
 		s = s[j+1:]
 	}
-	if f6[0] != shimMagic {
+	if f7[0] != shimMagic {
 		return nil, fmt.Errorf("corrupt shim for %q", bin)
 	}
 	return &shimInfo{
-		Kind:    f6[1],
-		Node:    f6[2],
-		Entry:   f6[3],
-		Tool:    f6[4],
-		Version: strings.TrimSpace(s),
+		Kind:    f7[1],
+		Node:    f7[2],
+		Entry:   f7[3],
+		Tool:    f7[4],
+		Version: f7[5],
+		Pin:     strings.TrimSpace(s),
 	}, nil
 }
 
@@ -389,7 +391,9 @@ func cli(args []string) int {
 		case "d", "doctor":
 			return cmdDoctor(args[1:])
 		case "s", "shims":
-			return cmdShims()
+			// Same work as `pin doctor --fix`: relinking is idempotent, so the
+			// two only ever differed by how much they printed.
+			return cmdDoctor([]string{"--fix"})
 		case "completion":
 			return cmdCompletion(args[1:])
 		case "__complete":
@@ -439,7 +443,7 @@ commands:
   rm                      unpin: rm <pkg|bin>...
   which                   show what a shim resolves to: pin which <bin>
   doctor                  verify; --fix re-binds stale shims, drops orphans
-  shims                   relink shims after upgrading pin
+  shims                   relink every shim; same as doctor --fix
   completion              print shell glue: bash | zsh | fish | powershell
   version                 print version
   help                    print this
@@ -1547,6 +1551,18 @@ func cmdWhich(args []string) int {
 	return 0
 }
 
+// shimCurrent reports whether the file in ~/.pin/bin belongs to the binary we
+// are running as. For the normal case that is the same inode. A rebuild replaces
+// the inode and leaves every shim behind, and those leftovers stat exactly like
+// a copy (same size, link count back to 1), so the shim file records the build
+// that wrote it and a copy is judged by that instead.
+func shimCurrent(sh *shimInfo, link, self os.FileInfo) bool {
+	if self != nil && os.SameFile(self, link) {
+		return true
+	}
+	return sh.Pin != "" && sh.Pin == version
+}
+
 func cmdDoctor(args []string) int {
 	fix := false
 	for _, a := range args {
@@ -1561,12 +1577,9 @@ func cmdDoctor(args []string) int {
 		return 1
 	}
 	self, _ := os.Executable()
-	selfSize := int64(-1)
-	if st, err := os.Stat(self); err == nil {
-		selfSize = st.Size()
-	}
+	selfInfo, _ := os.Stat(self)
 
-	bad, healed := 0, 0
+	bad, healed, warn := 0, 0, 0
 	shadowed := 0
 	if !onPath(binDir()) {
 		fmt.Printf("✗ %-12s is not on PATH; no shim can be reached\n", binDir())
@@ -1625,9 +1638,22 @@ func cmdDoctor(args []string) int {
 				fmt.Printf("  %-12s put %s before that directory on PATH\n", "", binDir())
 				shadowed++
 			}
+			// Does the file in ~/.pin/bin belong to this binary? A rebuild
+			// replaces the inode and leaves every shim behind, and the leftovers
+			// are indistinguishable from a copy by stat alone — same size, link
+			// count back to 1. So the shim file records which build wrote it and
+			// this compares that against the build we are running as.
 			link := filepath.Join(binDir(), b+exeSuffix())
-			if st, err := os.Stat(link); err != nil {
+			st, err := os.Stat(link)
+			missing := err != nil
+			stale := !missing && !shimCurrent(sh, st, selfInfo)
+			if missing || stale {
 				if fix {
+					// Restamp the metadata as well: a copy can never become the
+					// same inode, so without this it would look stale forever.
+					if stale {
+						_ = writeShimFile(b, sh.Kind, sh.Node, sh.Entry, sh.Tool, sh.Version)
+					}
 					if err := makeShim(b); err != nil {
 						fmt.Printf("✗ %-12s %v\n", key, err)
 						bad++
@@ -1635,18 +1661,12 @@ func cmdDoctor(args []string) int {
 						healed++
 						fmt.Printf("~ %-12s relinked %s\n", key, b)
 					}
-				} else {
+				} else if missing {
 					fmt.Printf("✗ %-12s shim missing: %s (run: pin d --fix)\n", key, link)
 					bad++
-				}
-			} else if selfSize >= 0 && st.Size() != selfSize {
-				if fix {
-					if err := makeShim(b); err == nil {
-						healed++
-						fmt.Printf("~ %-12s relinked stale shim %s\n", key, b)
-					}
 				} else {
-					fmt.Printf("! %-12s shim is a stale copy: %s (run: pin d --fix)\n", key, link)
+					fmt.Printf("! %-12s %s was written by pin %q, this is %q (run: pin d --fix)\n", key, b, sh.Pin, version)
+					warn++
 				}
 			}
 		}
@@ -1694,38 +1714,13 @@ func cmdDoctor(args []string) int {
 	case healed > 0:
 		fmt.Printf("fixed %d issue(s); %d pinned tool(s) healthy\n", healed, len(db))
 		return 0
+	case warn > 0:
+		fmt.Printf("%d pinned tool(s) healthy, %d shim(s) want relinking\n", len(db), warn)
+		return 0
 	default:
 		fmt.Printf("ok: %d pinned tools healthy\n", len(db))
 		return 0
 	}
-}
-
-func cmdShims() int {
-	ents, err := os.ReadDir(toolsDir())
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "pin:", err)
-		return 1
-	}
-	n, failed := 0, 0
-	for _, de := range ents {
-		if de.IsDir() || !strings.HasSuffix(de.Name(), ".txt") {
-			continue
-		}
-		bin := strings.TrimSuffix(de.Name(), ".txt")
-		if err := makeShim(bin); err != nil {
-			// One locked file must not stop the other nine from being fixed.
-			fmt.Fprintf(os.Stderr, "pin: %s: %v\n", bin, err)
-			failed++
-			continue
-		}
-		n++
-	}
-	fmt.Printf("relinked %d shims in %s\n", n, binDir())
-	if failed > 0 {
-		fmt.Fprintf(os.Stderr, "pin: %d shim(s) could not be replaced; close whatever is running them and rerun 'pin s'\n", failed)
-		return 1
-	}
-	return 0
 }
 
 func contains(list []string, s string) bool {

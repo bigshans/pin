@@ -33,7 +33,7 @@ cd pin
 
 Add `~/.pin/bin` (`%USERPROFILE%\.pin\bin` on Windows) to your PATH, ahead of your version manager. That directory holds nothing but shims: the `pin` binary does not need to be there, since a shim is a hard link to it and two paths on one filesystem cost one copy (across filesystems it degrades to a copy — 3MB per shim).
 
-After replacing the pin binary run `pin shims` once to relink every shim (the new binary is a different inode); `pin doctor` tells you whether any were missed.
+After replacing the pin binary, `pin doctor` reports every shim as stale — each one records the build that wrote it, so a new build no longer matches — and `pin doctor --fix` (or `pin shims`) relinks them. `go build -o` always produces a new inode, so every rebuild needs it.
 
 Node comes from whatever version manager you already use (fnm, nvm, mise, asdf, proto, vfox and volta are all recognised); `pin` never downloads anything itself.
 
@@ -53,7 +53,7 @@ pin which ni                  # show what the ni shim actually executes
 pin rm cowsay                 # unpin; a bin name works too: pin rm cowthink
 pin doctor                    # check runtimes, entry points and shims
 pin doctor --fix              # same, but re-bind stale shims and drop orphans
-pin shims                     # relink every shim (after replacing the binary)
+pin shims                     # relink every shim; same as pin doctor --fix
 pin completion bash           # print the completion script
 pin version
 ```
@@ -166,7 +166,7 @@ with a pointer to `nodeLinker: node-modules` in `.yarnrc.yml`.
 ```
 $PIN_HOME (default ~/.pin)
 ├── bin/<tool>         hard link to the pin binary; argv[0] decides the role
-├── tools/<tool>.txt   six plain lines: kind, node, entry, tool, version
+├── tools/<tool>.txt   seven plain lines: kind, node, entry, tool, runtime version, pin build
 ├── pkgs/<name>/       where npm install -g --prefix puts the package
 └── pins.json          registry, read only by the CLI, never by a shim
 ```
