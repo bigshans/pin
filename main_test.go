@@ -300,3 +300,46 @@ func TestUpdateRejectsUnknownPackage(t *testing.T) {
 		t.Fatalf("expected 1 for an unknown package, got %d", code)
 	}
 }
+
+// A bin name is not a package name: `pin cowthink` must be understood as part of
+// cowsay, not sent to the registry as a package that does not exist.
+func TestAddRefusesBinName(t *testing.T) {
+	t.Setenv("PIN_HOME", t.TempDir())
+	dir := fakeRuntime(t)
+	if err := saveDB(map[string]Entry{"cowsay": {
+		Spec: "cowsay", Version: "1.6.0", Runtime: "20.20.2",
+		NodePath: filepath.Join(dir, nodeExeName()), Bins: []string{"cowsay", "cowthink"}, PM: "npm",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if code := cli([]string{"-n", dir, "cowthink"}); code != 1 {
+		t.Fatalf("expected refusal for a bin name, got %d", code)
+	}
+}
+
+func TestPinByName(t *testing.T) {
+	db := map[string]Entry{
+		"cowsay": {Spec: "cowsay", Bins: []string{"cowsay", "cowthink"}},
+		"ni":     {Spec: "@antfu/ni", Bins: []string{"ni", "nr"}},
+	}
+	for _, c := range []struct {
+		name string
+		want string
+	}{
+		{"cowsay", "cowsay"},   // by key
+		{"cowthink", "cowsay"}, // by bin
+		{"nr", "ni"},           // by bin
+		{"absent", ""},         // neither
+	} {
+		e, ok := pinByName(db, c.name)
+		if c.want == "" {
+			if ok {
+				t.Errorf("%s: expected no match, got %+v", c.name, e)
+			}
+			continue
+		}
+		if !ok || e.Spec != db[c.want].Spec {
+			t.Errorf("%s: got %+v (ok=%v), want %s", c.name, e, ok, c.want)
+		}
+	}
+}

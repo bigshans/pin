@@ -67,7 +67,7 @@ Three verbs, one job each:
 
 | Command | What it does |
 |---|---|
-| `pin <pkg>` | **install only**. An already pinned package is refused with a pointer to the other two |
+| `pin <pkg>` | **install only**. An already pinned package — or one of its bin names — is refused with a pointer to the other two |
 | `pin up [<pkg>@<ver>]...` | **upgrade only**. No arguments upgrades everything; bindings do not move |
 | `pin -n <ver> <pkg>` | **re-point only**. No reinstall, no upgrade |
 

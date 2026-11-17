@@ -392,6 +392,21 @@ func toolKey(name string) string {
 	return name
 }
 
+// pinByName finds a pinned package by registry key or by one of its bins, so
+// that `pin cowthink` is understood as "that is part of cowsay" instead of
+// being sent to the registry as a package name that does not exist.
+func pinByName(db map[string]Entry, name string) (Entry, bool) {
+	if e, ok := db[name]; ok {
+		return e, true
+	}
+	for _, e := range db {
+		if contains(e.Bins, name) {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
 // keyHolder reports which package already owns name's key: one already in the
 // registry, or an earlier package in the same command. Both the install
 // directory and the registry key are the last path segment, so @a/cli and
@@ -985,7 +1000,7 @@ func cmdAdd(args []string) int {
 	// instead of guessing from the state.
 	seen := map[string]string{}
 	for _, spec := range specs {
-		pkgName, _ := splitSpec(spec)
+		pkgName, ver := splitSpec(spec)
 		key := toolKey(pkgName)
 		if held, ok := keyHolder(db, seen, pkgName); ok {
 			fmt.Fprintf(os.Stderr, "pin: %q is already taken by %s; pin r %s first, or pin a different package\n", key, held, key)
@@ -993,9 +1008,13 @@ func cmdAdd(args []string) int {
 		}
 		seen[key] = pkgName
 		// An explicit -n that differs is the "move it" case, handled below.
-		if prev, ok := db[key]; ok && !(explicitRT && prev.NodePath != nodePath) {
+		if prev, ok := pinByName(db, key); ok && !(explicitRT && prev.NodePath != nodePath) {
 			fmt.Fprintf(os.Stderr, "pin: %s is already pinned (%s, on node %s)\n", key, prev.Spec, prev.Runtime)
-			fmt.Fprintf(os.Stderr, "  pin up %s          upgrade it in place, keeping node %s\n", key, prev.Runtime)
+			if ver != "" {
+				fmt.Fprintf(os.Stderr, "  pin up %s    install that version in place\n", spec)
+			} else {
+				fmt.Fprintf(os.Stderr, "  pin up %s          upgrade it in place, keeping node %s\n", key, prev.Runtime)
+			}
 			fmt.Fprintf(os.Stderr, "  pin -n <ver> %s    move it to another runtime\n", key)
 			fmt.Fprintf(os.Stderr, "  pin r %s           remove it\n", key)
 			return 1
