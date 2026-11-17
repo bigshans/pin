@@ -43,6 +43,7 @@ pin @antfu/ni                 # install and pin using the node currently on PATH
 pin -n 20 @antfu/ni           # pin to Node 20 (20, 20.20 and 20.20.2 all work)
 pin -n 20 cowsay@1.6.0        # package version and runtime together
 pin --install -n 18 cowsay    # Node 18 isn't installed; let the manager do it first
+pin --pm pnpm @antfu/ni       # install with pnpm (npm / pnpm / yarn)
 pin                           # list pinned tools
 pin w ni                      # show what the ni shim actually executes
 pin r cowsay                  # unpin; a bin name works too: pin r cowthink
@@ -96,6 +97,27 @@ If nothing matches, the directory is derived from `exec.LookPath("node")`; `-n <
 
 The resolved node path is written into the shim at install time, so a pin binds a path rather than a version constraint. If that path disappears later (manager upgrade, `fnm uninstall`), the shim looks the recorded version up once more before failing; when it does fail, it prints the command that would fix it.
 
+## Where the package manager comes from
+
+Installing a package is handed to one of three managers, chosen in this order:
+
+1. `pin --pm <name>`;
+2. whatever installed the package last time (re-running `pin add` is an upgrade,
+   and swapping the layout under it is not what anyone means);
+3. the `PIN_PM` environment variable;
+4. npm.
+
+All three work: `npm install`, `pnpm add`, `yarn add`. `$PIN_HOME/pkgs/<key>` is
+treated as a real project directory — pin drops a `package.json` with nothing
+but `name` and `private` in it, lets the chosen manager fill in `node_modules`,
+and then reads the package's own `package.json` `bin` field for the entries. So
+npm's flat tree and pnpm's symlinked store both work: pin never has to understand
+the layout.
+
+Switching managers wipes the directory first; the two layouts do not mix. yarn 2+
+defaults to Plug'n'Play, which has no `node_modules` at all, so pin refuses it
+with a pointer to `nodeLinker: node-modules` in `.yarnrc.yml`.
+
 ## How it works
 
 ```
@@ -138,11 +160,13 @@ The binary is about 2.9MB.
 |---|---|
 | `PIN_HOME` | Install root, defaults to `~/.pin` |
 | `PIN_NODE` | Runtime directory used when `-n` is omitted |
+| `PIN_PM` | Package manager used when `--pm` is omitted and the package has no record yet |
 | `PIN_STRICT_RUNTIME` | When non-empty, put the pinned runtime first on PATH so child processes follow it instead of the project |
 
 ## Known limitations
 
 - No downloading. Either let `--install` hand it to your manager, or install the version yourself first.
+- yarn 2+ Plug'n'Play is not supported: PnP has no `node_modules` and the entry lives inside a zip, which would need a loader injected into the shim. Set `nodeLinker: node-modules` for packages installed by pin.
 - A native binary shim is executed directly without injecting Node; `.cmd` and `.bat` go through `cmd.exe /c` on Windows.
 - One version per package. For several, `pin r` first; concurrent versions would need a different registry key. The install directory and the registry key are the last path segment of the package name, so `@a/cli` and `@b/cli` cannot coexist either — the second is refused instead of quietly replacing the first.
 - On Windows, Ctrl+C is broadcast by the shared console to the tool and the process tree it spawned; the shim neither swallows it nor exits first, it just waits for the tool to finish. If the tool detached itself into its own process group (`detached: true`) the broadcast never arrives, so it is killed after a 5 second grace and the shim exits 130; a second Ctrl+C skips the wait. Closing the terminal window or ending pin in Task Manager takes the tool and everything it spawned with it — that is the job object's doing, and it needs no code of ours to run.

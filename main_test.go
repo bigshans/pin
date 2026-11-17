@@ -135,3 +135,47 @@ func TestWriteFileAtomicKeepsOldOnFailure(t *testing.T) {
 		t.Fatalf("previous file damaged: %q, %v", b, err)
 	}
 }
+
+func TestPMArgs(t *testing.T) {
+	for _, pm := range []string{"npm", "pnpm", "yarn"} {
+		args, ok := pmArgs(pm, "cowsay@1.6.0")
+		if !ok || args[0] == "" || !strings.Contains(strings.Join(args, " "), "cowsay@1.6.0") {
+			t.Errorf("%s: unexpected argv %q (ok=%v)", pm, args, ok)
+		}
+	}
+	if _, ok := pmArgs("bun", "x"); ok {
+		t.Error("bun should not be accepted")
+	}
+}
+
+func TestChoosePM(t *testing.T) {
+	t.Setenv("PIN_PM", "")
+	cases := []struct {
+		flag, prevPM, env, want string
+	}{
+		{"pnpm", "npm", "", "pnpm"}, // the flag always wins
+		{"", "yarn", "", "yarn"},    // upgrade keeps what the package used
+		{"", "", "pnpm", "pnpm"},    // nothing recorded: the environment decides
+		{"", "", "", "npm"},         // default
+		{"", "", "bogus", "npm"},    // an unusable PIN_PM falls back
+	}
+	for _, c := range cases {
+		t.Setenv("PIN_PM", c.env)
+		if got := choosePM(c.flag, Entry{PM: c.prevPM}); got != c.want {
+			t.Errorf("flag=%q prev=%q env=%q: got %q, want %q", c.flag, c.prevPM, c.env, got, c.want)
+		}
+	}
+}
+
+func TestProjectName(t *testing.T) {
+	for in, want := range map[string]string{
+		"ni":      "ni",
+		"Cowsay":  "cowsay",
+		"@Scope!": "-scope-",
+		"":        "pkg",
+	} {
+		if got := projectName(in); got != want {
+			t.Errorf("projectName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

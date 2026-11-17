@@ -43,6 +43,7 @@ pin @antfu/ni                 # 用当前 PATH 上的 node 安装并钉住
 pin -n 20 @antfu/ni           # 指定 Node 20（20 / 20.20 / 20.20.2 都可以）
 pin -n 20 cowsay@1.6.0        # 同时指定包版本
 pin --install -n 18 cowsay    # 本机没有 Node 18，先交给版本管理器装
+pin --pm pnpm @antfu/ni       # 用 pnpm 装（npm / pnpm / yarn 三选一）
 pin                           # 列出已钉住的包
 pin w ni                      # 看 ni 这个 shim 实际会执行什么
 pin r cowsay                  # 卸载，也可以用 bin 名：pin r cowthink
@@ -96,6 +97,19 @@ Add-Content $PROFILE 'pin completion powershell | Out-String | Invoke-Expression
 
 安装时把解析出的 node 路径写死进 shim，所以绑定的是路径而不是版本约束。路径失效时（管理器升级、`fnm uninstall`），shim 会按记录的版本号重新查找一次再执行；找不到才报错，并给出对应的安装命令。
 
+## 包管理器从哪来
+
+装包这一步交给谁，按下面这个顺序决定：
+
+1. `pin --pm <name>` 显式指定；
+2. 这个包上次是用谁装的（重跑 `pin add` 是升级，不悄悄换掉布局）；
+3. `PIN_PM` 环境变量；
+4. 默认 `npm`。
+
+三家都支持：`npm install`、`pnpm add`、`yarn add`。做法是把 `$PIN_HOME/pkgs/<key>` 当成一个真正的项目目录（pin 先放一个只有 `name` / `private` 的 `package.json` 进去），让选中的包管理器往里面装，装完只读 `node_modules/<pkg>/package.json` 的 `bin` 找入口 —— 所以 npm 的扁平树和 pnpm 的符号链接商店都能用，pin 不需要理解它们的布局差异。
+
+换包管理器时会先删掉旧目录再装，两家的布局不能混。yarn 2+ 默认的 Plug'n'Play 没有 `node_modules`，pin 会直接报错并提示：在 `.yarnrc.yml` 里设 `nodeLinker: node-modules`。
+
 ## 工作原理
 
 ```
@@ -138,11 +152,13 @@ Windows 11，Node 20.20.2，各跑 20 次取均值：
 |---|---|
 | `PIN_HOME` | 安装根目录，默认 `~/.pin` |
 | `PIN_NODE` | 省略 `-n` 时使用的 runtime 目录 |
+| `PIN_PM` | 省略 `--pm` 且该包没有历史记录时使用的包管理器 |
 | `PIN_STRICT_RUNTIME` | 设为非空时，把钉住的 runtime 放到 PATH 最前，子进程跟随它而不是跟随项目 |
 
 ## 已知限制
 
 - 不下载 Node。缺版本要么用 `--install` 交给版本管理器，要么自己装好再用。
+- 不支持 yarn 2+ 的 Plug'n'Play（PnP 没有 `node_modules`，entry 在 zip 里需要 loader 注入）；用 pin 装包时请设 `nodeLinker: node-modules`。
 - `bin` 是原生二进制时直接执行，不注入 Node；`.cmd` / `.bat` 在 Windows 上走 `cmd.exe /c`。
 - 同一个包只能钉一个版本，需要多版本共存得先 `pin r` 再装。目录名和注册表 key 都取包名的最后一段，所以 `@a/cli` 和 `@b/cli` 也只能存在一个：装第二个会被拒绝，而不是静静地覆盖第一个。
 - Windows 上 Ctrl+C 由共享控制台广播给工具及其子进程树，shim 自己不吞这个信号、也不抢先退出，只等它收尾。工具如果自己把自己放进了独立进程组（`detached: true`），收不到广播，那就等 5 秒后被强杀，shim 以 130 退出；再按一次 Ctrl+C 跳过等待。关掉终端窗口或在任务管理器里结束 pin 时，工具连同它派生的进程会一起死——这由 job object 保证，不依赖 pin 自己还能执行代码。

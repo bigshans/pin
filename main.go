@@ -33,6 +33,9 @@ type Entry struct {
 	Runtime  string   `json:"runtime"`
 	NodePath string   `json:"nodePath"`
 	Bins     []string `json:"bins"`
+	// PM is the package manager that materialised the directory. Empty means
+	// npm, which is what every entry written before this field existed used.
+	PM string `json:"pm,omitempty"`
 }
 
 // ---------- paths ----------
@@ -339,6 +342,7 @@ func usage() {
 usage:
   pin <pkg>[@ver]...       install & pin with the current node
   pin -n <ver|dir> <pkg>   same, with a chosen runtime  (pin -n 20 @antfu/ni)
+  pin --pm <name> <pkg>    install with npm, pnpm or yarn (default: npm)
   pin --install -n <ver>   install the runtime first if it is missing
   pin                      list pinned tools        (= pin l)
   pin l                    list
@@ -354,6 +358,7 @@ verbs also accept full names: add / ls / rm / which / doctor / shims
 env:
   PIN_HOME            install root (default ~/.pin)
   PIN_NODE            default runtime dir when -n is omitted
+  PIN_PM              default package manager when --pm is omitted
   PIN_STRICT_RUNTIME  keep the pinned runtime first on PATH for child processes
 
 put ~/.pin/bin (or %USERPROFILE%\.pin\bin) on PATH once, then never again.
@@ -730,26 +735,109 @@ func resolveRuntime(flag string) (string, string, error) {
 	return "", "", errors.New("no node runtime found; pass --runtime <ver|dir> or set PIN_NODE")
 }
 
-func findNpmCli(nodePath string) (string, error) {
-	base := filepath.Dir(nodePath)
-	cands := []string{
-		filepath.Join(base, "node_modules", "npm", "bin", "npm-cli.js"),
-		filepath.Join(base, "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
-		filepath.Join(base, "lib", "node_modules", "npm", "bin", "npm-cli.js"),
-		filepath.Join(base, "..", "node_modules", "npm", "bin", "npm-cli.js"),
+// pmArgs turns a package manager into the argv that materialises spec inside
+// the current directory. All pin needs from a manager is "put the package in
+// ./node_modules/<name>", which is why supporting one is a case here rather
+// than a code path: the bin discovery reads package.json and never looks at the
+// layout. npm and pnpm write two different tree shapes and it does not matter.
+func pmArgs(pm, spec string) ([]string, bool) {
+	switch pm {
+	case "npm":
+		return []string{"install", spec, "--no-fund", "--no-audit", "--loglevel=error"}, true
+	case "pnpm":
+		return []string{"add", spec, "--reporter=silent"}, true
+	case "yarn":
+		return []string{"add", spec}, true
 	}
-	for _, c := range cands {
-		if st, err := os.Stat(c); err == nil && !st.IsDir() {
-			return filepath.Clean(c), nil
+	return nil, false
+}
+
+// choosePM decides the package manager for one package: --pm wins, then what the
+// package was installed with before (re-pinning is an upgrade, and silently
+// switching layout on an upgrade is not what anyone means), then PIN_PM, then npm.
+func choosePM(flag string, prev Entry) string {
+	if flag != "" {
+		return flag
+	}
+	if prev.PM != "" {
+		return prev.PM
+	}
+	if env := os.Getenv("PIN_PM"); env != "" {
+		if _, ok := pmArgs(env, ""); ok {
+			return env
 		}
 	}
-	return "", errors.New("npm not found next to " + nodePath + " (nodist/nvm " + nodeExeName() + " without npm?)")
+	return "npm"
+}
+
+func prevPM(e Entry) string {
+	if e.PM == "" {
+		return "npm"
+	}
+	return e.PM
+}
+
+// installPackage treats the install directory as a tiny private project and
+// lets the chosen manager fill in node_modules. This is the whole trick: pin
+// owns the destination, so it never has to understand how a manager would have
+// picked one on its own.
+func installPackage(pm, key, prefix, spec, nodePath string) error {
+	args, ok := pmArgs(pm, spec)
+	if !ok {
+		return fmt.Errorf("unknown package manager %q", pm)
+	}
+	bin, err := exec.LookPath(pm)
+	if err != nil {
+		return fmt.Errorf("%s is not on PATH", pm)
+	}
+	if err := ensureProject(prefix, key); err != nil {
+		return err
+	}
+	cmd := exec.Command(bin, args...)
+	cmd.Dir = prefix
+	// The pinned runtime first, so postinstall scripts that need node get the
+	// version this package is being pinned to.
+	cmd.Env = prependPath(os.Environ(), filepath.Dir(nodePath))
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// ensureProject gives the manager something to install into. It is deliberately
+// minimal: no dependencies, no scripts, private so it can never be published.
+func ensureProject(prefix, key string) error {
+	if err := os.MkdirAll(prefix, 0o755); err != nil {
+		return err
+	}
+	pj := filepath.Join(prefix, "package.json")
+	if _, err := os.Stat(pj); err == nil {
+		return nil
+	}
+	body := fmt.Sprintf("{\n  \"name\": \"pin-%s\",\n  \"version\": \"0.0.0\",\n  \"private\": true\n}\n", projectName(key))
+	return writeFileAtomic(pj, []byte(body), 0o644)
+}
+
+// projectName keeps the synthetic package.json name legal: npm rejects
+// uppercase and anything outside a small character set.
+func projectName(key string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(key) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '.', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	if b.Len() == 0 {
+		return "pkg"
+	}
+	return b.String()
 }
 
 // ---------- commands ----------
 
 func cmdAdd(args []string) int {
-	var rtFlag string
+	var rtFlag, pmFlag string
 	var specs []string
 	withInstall := false
 	for i := 0; i < len(args); i++ {
@@ -767,6 +855,15 @@ func cmdAdd(args []string) int {
 		case strings.HasPrefix(a, "-n=") || strings.HasPrefix(a, "-r=") ||
 			strings.HasPrefix(a, "--node=") || strings.HasPrefix(a, "--runtime="):
 			_, rtFlag, _ = strings.Cut(a, "=")
+		case a == "--pm":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "pin: --pm needs a value (npm, pnpm or yarn)")
+				return 2
+			}
+			i++
+			pmFlag = args[i]
+		case strings.HasPrefix(a, "--pm="):
+			_, pmFlag, _ = strings.Cut(a, "=")
 		case strings.HasPrefix(a, "-"):
 			fmt.Fprintf(os.Stderr, "pin: unknown flag %s\n", a)
 			return 2
@@ -775,8 +872,14 @@ func cmdAdd(args []string) int {
 		}
 	}
 	if len(specs) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: pin [-n <ver|dir>] <pkg>[@ver]...")
+		fmt.Fprintln(os.Stderr, "usage: pin [-n <ver|dir>] [--pm npm|pnpm|yarn] <pkg>[@ver]...")
 		return 2
+	}
+	if pmFlag != "" {
+		if _, ok := pmArgs(pmFlag, ""); !ok {
+			fmt.Fprintf(os.Stderr, "pin: unknown package manager %q (npm, pnpm or yarn)\n", pmFlag)
+			return 2
+		}
 	}
 
 	rtLabel, nodePath, err := resolveRuntime(rtFlag)
@@ -791,12 +894,6 @@ func cmdAdd(args []string) int {
 		fmt.Fprintln(os.Stderr, "pin:", err)
 		return 1
 	}
-	npmCli, err := findNpmCli(nodePath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "pin:", err)
-		return 1
-	}
-
 	db, err := loadDB()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "pin:", err)
@@ -821,20 +918,23 @@ func cmdAdd(args []string) int {
 		pkgName, _ := splitSpec(spec)
 		key := toolKey(pkgName)
 		prefix := pkgDir(key)
-		if err := os.MkdirAll(prefix, 0o755); err != nil {
-			fmt.Fprintln(os.Stderr, "pin:", err)
-			return 1
+		pm := choosePM(pmFlag, db[key])
+		if prev, ok := db[key]; ok && prevPM(prev) != pm {
+			// A flat npm tree and a pnpm store do not mix, and a lockfile from
+			// one manager means nothing to another.
+			fmt.Printf("   reinstalling with %s (was %s)\n", pm, prevPM(prev))
+			if err := os.RemoveAll(prefix); err != nil {
+				fmt.Fprintln(os.Stderr, "pin:", err)
+				return 1
+			}
 		}
 
-		fmt.Printf("→ %s  (runtime %s)\n", spec, rtLabel)
-		cmd := exec.Command(nodePath,
-			npmCli, "install", "-g", "--prefix", prefix,
-			"--no-fund", "--no-audit", "--loglevel=error", spec,
-		)
-		cmd.Env = prependPath(os.Environ(), filepath.Dir(nodePath))
-		cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-		if err := cmd.Run(); err != nil {
-			fmt.Fprintf(os.Stderr, "pin: npm install failed for %s\n", spec)
+		fmt.Printf("→ %s  (runtime %s, via %s)\n", spec, rtLabel, pm)
+		if err := installPackage(pm, key, prefix, spec, nodePath); err != nil {
+			fmt.Fprintf(os.Stderr, "pin: %s install failed for %s: %v\n", pm, spec, err)
+			if pm == "yarn" {
+				fmt.Fprintln(os.Stderr, "  yarn 2+ defaults to Plug'n'Play, which has no node_modules; set nodeLinker: node-modules in .yarnrc.yml")
+			}
 			return 1
 		}
 
@@ -902,6 +1002,7 @@ func cmdAdd(args []string) int {
 			Runtime:  rtLabel,
 			NodePath: nodePath,
 			Bins:     names,
+			PM:       pm,
 		}
 		fmt.Printf("  pinned %s@%s → %s\n", pkgName, meta.Version, strings.Join(names, ", "))
 	}
@@ -986,10 +1087,10 @@ func cmdList() int {
 		}
 	}
 	sort.Strings(keys)
-	fmt.Printf("%-*s  %-12s  %-10s  %s\n", w, "NAME", "VERSION", "RUNTIME", "BINS")
+	fmt.Printf("%-*s  %-12s  %-10s  %-4s  %s\n", w, "NAME", "VERSION", "RUNTIME", "PM", "BINS")
 	for _, k := range keys {
 		e := db[k]
-		fmt.Printf("%-*s  %-12s  %-10s  %s\n", w, k, e.Version, shorten(e.Runtime, 10), strings.Join(e.Bins, ", "))
+		fmt.Printf("%-*s  %-12s  %-10s  %-4s  %s\n", w, k, e.Version, shorten(e.Runtime, 10), prevPM(e), strings.Join(e.Bins, ", "))
 	}
 	return 0
 }
