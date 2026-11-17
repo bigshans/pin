@@ -297,6 +297,8 @@ func cli(args []string) int {
 		switch args[0] {
 		case "a", "add", "i", "install":
 			return cmdAdd(args[1:])
+		case "up", "update":
+			return cmdUpdate(args[1:])
 		case "l", "ls", "list":
 			return cmdList()
 		case "r", "rm", "remove", "u", "uninstall":
@@ -345,6 +347,7 @@ usage:
   pin <pkg>[@ver]...       install & pin with the current node
   pin -n <ver|dir> <pkg>   same, with a chosen runtime  (pin -n 20 @antfu/ni)
   pin --pm <name> <pkg>    install with npm, pnpm or yarn (default: npm)
+  pin up [<pkg>...]        upgrade pinned packages, keeping their runtime
   pin -n <ver> <pinned>    re-point an existing pin at another runtime, no reinstall
   pin --install -n <ver>   install the runtime first if it is missing
   pin                      list pinned tools        (= pin l)
@@ -977,18 +980,26 @@ func cmdAdd(args []string) int {
 		return 1
 	}
 
-	// Check every spec before touching the disk. The directory and the registry
-	// key both come from the last path segment, so @a/cli and @b/cli would share
-	// them: installing the second would overwrite the first's entry, and `pin r`
-	// would then delete both sets of files under it.
+	// Check every spec before touching the disk. `pin <pkg>` installs and nothing
+	// else now: when the package is already pinned, say which command does what
+	// instead of guessing from the state.
 	seen := map[string]string{}
 	for _, spec := range specs {
 		pkgName, _ := splitSpec(spec)
+		key := toolKey(pkgName)
 		if held, ok := keyHolder(db, seen, pkgName); ok {
-			fmt.Fprintf(os.Stderr, "pin: %q is already taken by %s; pin r %s first, or pin a different package\n", toolKey(pkgName), held, toolKey(pkgName))
+			fmt.Fprintf(os.Stderr, "pin: %q is already taken by %s; pin r %s first, or pin a different package\n", key, held, key)
 			return 1
 		}
-		seen[toolKey(pkgName)] = pkgName
+		seen[key] = pkgName
+		// An explicit -n that differs is the "move it" case, handled below.
+		if prev, ok := db[key]; ok && !(explicitRT && prev.NodePath != nodePath) {
+			fmt.Fprintf(os.Stderr, "pin: %s is already pinned (%s, on node %s)\n", key, prev.Spec, prev.Runtime)
+			fmt.Fprintf(os.Stderr, "  pin up %s          upgrade it in place, keeping node %s\n", key, prev.Runtime)
+			fmt.Fprintf(os.Stderr, "  pin -n <ver> %s    move it to another runtime\n", key)
+			fmt.Fprintf(os.Stderr, "  pin r %s           remove it\n", key)
+			return 1
+		}
 	}
 
 	for _, spec := range specs {
@@ -997,129 +1008,233 @@ func cmdAdd(args []string) int {
 		prefix := pkgDir(key)
 		pm := choosePM(pmFlag)
 
-		pkgNode, pkgLabel := nodePath, rtLabel
-		if prev, ok := db[key]; ok && !explicitRT {
-			if _, err := os.Stat(prev.NodePath); err == nil {
-				pkgNode, pkgLabel = prev.NodePath, prev.Runtime
-			} else {
-				fmt.Fprintf(os.Stderr, "pin: note: %s was pinned to node %s, which is gone; using %s\n", key, prev.Runtime, rtLabel)
-			}
-		}
-
-		// Pointing an existing pin at another runtime is a path edit, not an
-		// install: pure JavaScript does not care which node runs it. Skipped
-		// when the runtime is unchanged, because then this is the upgrade path.
-		if prev, ok := db[key]; ok && prevPM(prev) == pm && prev.NodePath != pkgNode {
-			// Native modules are compiled against one node ABI, so those get
-			// reinstalled rather than re-pointed. Nobody should have to remember
-			// which of their tools carries a compiled dependency.
-			if hasNativeModules(prefix) {
-				fmt.Printf("   %s has native modules; reinstalling instead of re-pointing\n", key)
-			} else {
-				if err := rebind(key, prev, pkgNode, pkgLabel, db); err != nil {
+		if prev, ok := db[key]; ok {
+			// Only reachable with an explicit -n: re-point, or reinstall when the
+			// package carries native code compiled against one node ABI.
+			if prevPM(prev) == pm && !hasNativeModules(prefix) {
+				if err := rebind(key, prev, nodePath, rtLabel, db); err != nil {
 					fmt.Fprintln(os.Stderr, "pin:", err)
 					return 1
 				}
 				continue
 			}
-		}
-		if prev, ok := db[key]; ok && prevPM(prev) != pm {
-			// A flat npm tree and a pnpm store do not mix, and a lockfile from
-			// one manager means nothing to another.
-			fmt.Printf("   reinstalling with %s (was %s)\n", pm, prevPM(prev))
+			if prevPM(prev) == pm {
+				fmt.Printf("   %s has native modules; reinstalling instead of re-pointing\n", key)
+			} else {
+				fmt.Printf("   reinstalling with %s (was %s)\n", pm, prevPM(prev))
+			}
+			// A flat npm tree and a pnpm store do not mix, and a lockfile from one
+			// manager means nothing to another.
 			if err := os.RemoveAll(prefix); err != nil {
 				fmt.Fprintln(os.Stderr, "pin:", err)
 				return 1
 			}
 		}
 
-		fmt.Printf("→ %s  (runtime %s, via %s)\n", spec, pkgLabel, pm)
-		if err := installPackage(pm, key, prefix, spec, pkgNode); err != nil {
-			fmt.Fprintf(os.Stderr, "pin: %s install failed for %s: %v\n", pm, spec, err)
-			if pm == "yarn" {
-				fmt.Fprintln(os.Stderr, "  yarn 2+ defaults to Plug'n'Play, which has no node_modules; set nodeLinker: node-modules in .yarnrc.yml")
-			}
-			return 1
-		}
-
-		instDir := filepath.Join(prefix, "node_modules", filepath.FromSlash(pkgName))
-		pj, err := os.ReadFile(filepath.Join(instDir, "package.json"))
+		fmt.Printf("→ %s  (runtime %s, via %s)\n", spec, rtLabel, pm)
+		e, err := installAndShim(spec, key, pm, nodePath, rtLabel, db[key])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "pin: cannot read %s/package.json\n", instDir)
-			return 1
-		}
-		var meta struct {
-			Version string          `json:"version"`
-			Bin     json.RawMessage `json:"bin"`
-		}
-		if err := json.Unmarshal(pj, &meta); err != nil {
 			fmt.Fprintln(os.Stderr, "pin:", err)
 			return 1
 		}
-
-		bins := parseBins(pkgName, meta.Bin)
-		if len(bins) == 0 {
-			fmt.Fprintf(os.Stderr, "pin: %s publishes no bin, nothing to pin\n", pkgName)
-			return 1
-		}
-
-		names := make([]string, 0, len(bins))
-		for bin, rel := range bins {
-			// "pin" itself is the CLI binary; a shim of that name would shadow or
-			// clobber it, and isCLIName would keep routing it to the CLI anyway.
-			if bin == "pin" {
-				fmt.Fprintf(os.Stderr, "pin: skip bin %q: it collides with the pin CLI\n", bin)
-				continue
-			}
-			entry := filepath.Join(instDir, filepath.FromSlash(rel))
-			kind := kindOf(entry)
-			if _, err := os.Stat(entry); err != nil {
-				fmt.Fprintf(os.Stderr, "pin: warn: %s entry missing (%s)\n", bin, entry)
-			}
-			if err := writeShimFile(bin, kind, nodePath, entry, key, rtLabel); err != nil {
-				fmt.Fprintln(os.Stderr, "pin:", err)
-				return 1
-			}
-			if err := makeShim(bin); err != nil {
-				fmt.Fprintln(os.Stderr, "pin:", err)
-				return 1
-			}
-			names = append(names, bin)
-		}
-		sort.Strings(names)
-		if len(names) == 0 {
-			fmt.Fprintf(os.Stderr, "pin: %s publishes no usable bin\n", pkgName)
-			return 1
-		}
-
-		prev := db[key]
-		for _, old := range prev.Bins {
-			if !contains(names, old) {
-				_ = os.Remove(shimPath(old))
-				_ = os.Remove(filepath.Join(binDir(), old+exeSuffix()))
-			}
-		}
-
-		db[key] = Entry{
-			Spec:     spec,
-			Version:  meta.Version,
-			Runtime:  pkgLabel,
-			NodePath: pkgNode,
-			Bins:     names,
-			PM:       pm,
-		}
-		// Record each package as it lands. Installing several at once and failing
-		// on the last one used to leave the earlier ones upgraded on disk while
-		// the registry still described the old versions.
+		db[key] = e
+		// Record each package as it lands: failing on the last one must not leave
+		// the earlier ones on disk but missing from the registry.
 		if err := saveDB(db); err != nil {
 			fmt.Fprintln(os.Stderr, "pin:", err)
 			return 1
 		}
-		fmt.Printf("  pinned %s@%s → %s\n", pkgName, meta.Version, strings.Join(names, ", "))
+		fmt.Printf("  pinned %s@%s → %s\n", pkgName, e.Version, strings.Join(e.Bins, ", "))
 	}
 
 	fmt.Printf("PATH hint: %s\n", binDir())
 	return 0
+}
+
+// installAndShim installs spec into the package directory and builds its shims,
+// returning the registry entry for the caller to save. `pin add` and `pin up`
+// both go through here so the two can never drift apart.
+func installAndShim(spec, key, pm, nodePath, rtLabel string, prev Entry) (Entry, error) {
+	pkgName, _ := splitSpec(spec)
+	prefix := pkgDir(key)
+
+	if err := installPackage(pm, key, prefix, spec, nodePath); err != nil {
+		msg := fmt.Sprintf("%s install failed for %s: %v", pm, spec, err)
+		if pm == "yarn" {
+			msg += "\n  yarn 2+ defaults to Plug'n'Play, which has no node_modules; set nodeLinker: node-modules in .yarnrc.yml"
+		}
+		return Entry{}, errors.New(msg)
+	}
+
+	instDir := filepath.Join(prefix, "node_modules", filepath.FromSlash(pkgName))
+	pj, err := os.ReadFile(filepath.Join(instDir, "package.json"))
+	if err != nil {
+		return Entry{}, fmt.Errorf("cannot read %s/package.json", instDir)
+	}
+	var meta struct {
+		Version string          `json:"version"`
+		Bin     json.RawMessage `json:"bin"`
+	}
+	if err := json.Unmarshal(pj, &meta); err != nil {
+		return Entry{}, err
+	}
+
+	bins := parseBins(pkgName, meta.Bin)
+	if len(bins) == 0 {
+		return Entry{}, fmt.Errorf("%s publishes no bin, nothing to pin", pkgName)
+	}
+
+	names := make([]string, 0, len(bins))
+	for bin, rel := range bins {
+		// "pin" itself is the CLI binary; a shim of that name would shadow it,
+		// and isCLIName would keep routing it to the CLI anyway.
+		if bin == "pin" {
+			fmt.Fprintf(os.Stderr, "pin: skip bin %q: it collides with the pin CLI\n", bin)
+			continue
+		}
+		entry := filepath.Join(instDir, filepath.FromSlash(rel))
+		kind := kindOf(entry)
+		if _, err := os.Stat(entry); err != nil {
+			fmt.Fprintf(os.Stderr, "pin: warn: %s entry missing (%s)\n", bin, entry)
+		}
+		if err := writeShimFile(bin, kind, nodePath, entry, key, rtLabel); err != nil {
+			return Entry{}, err
+		}
+		if err := makeShim(bin); err != nil {
+			return Entry{}, err
+		}
+		names = append(names, bin)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return Entry{}, fmt.Errorf("%s publishes no usable bin", pkgName)
+	}
+
+	// Drop shims the new version no longer declares.
+	for _, old := range prev.Bins {
+		if !contains(names, old) {
+			_ = os.Remove(shimPath(old))
+			_ = os.Remove(filepath.Join(binDir(), old+exeSuffix()))
+		}
+	}
+
+	return Entry{
+		Spec:     spec,
+		Version:  meta.Version,
+		Runtime:  rtLabel,
+		NodePath: nodePath,
+		Bins:     names,
+		PM:       pm,
+	}, nil
+}
+
+// cmdUpdate upgrades pinned packages in place. Unlike adding, it never changes
+// which runtime a package is bound to: that is what `pin -n` is for.
+func cmdUpdate(args []string) int {
+	var pmFlag string
+	var keys []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--pm":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "pin: --pm needs a value (npm, pnpm or yarn)")
+				return 2
+			}
+			i++
+			pmFlag = args[i]
+		case strings.HasPrefix(a, "--pm="):
+			_, pmFlag, _ = strings.Cut(a, "=")
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintf(os.Stderr, "pin: unknown flag %s\n", a)
+			return 2
+		default:
+			keys = append(keys, a)
+		}
+	}
+
+	db, err := loadDB()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "pin:", err)
+		return 1
+	}
+	if len(keys) == 0 {
+		if len(db) == 0 {
+			fmt.Println("no pinned tools")
+			return 0
+		}
+		for k := range db {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+	}
+
+	rc := 0
+	for _, arg := range keys {
+		// `pin up cowsay@2` is how a pinned version advances; without a version
+		// the recorded spec is replayed.
+		name, ver := splitSpec(arg)
+		key := toolKey(name)
+		e, ok := db[key]
+		if ok && ver != "" {
+			if held, _ := splitSpec(e.Spec); held != name {
+				ok = false
+			}
+		}
+		if !ok && ver == "" {
+			for k, ent := range db {
+				if contains(ent.Bins, arg) {
+					key, e, ok = k, ent, true
+					break
+				}
+			}
+		}
+		if !ok {
+			fmt.Fprintf(os.Stderr, "pin: %s is not pinned\n", arg)
+			rc = 1
+			continue
+		}
+		spec := e.Spec
+		if ver != "" {
+			spec = arg
+		}
+
+		nodePath, rtLabel := e.NodePath, e.Runtime
+		if _, err := os.Stat(nodePath); err != nil {
+			label, np, found := findRuntimeByVersion(e.Runtime)
+			if !found {
+				fmt.Fprintf(os.Stderr, "pin: %s: node %s is gone; re-add it with: pin -n <ver> %s\n", key, e.Runtime, key)
+				rc = 1
+				continue
+			}
+			nodePath, rtLabel = np, label
+		}
+
+		pm := choosePM(pmFlag)
+		if prevPM(e) != pm {
+			fmt.Printf("   %s was installed with %s; reinstalling with %s\n", key, prevPM(e), pm)
+			if err := os.RemoveAll(pkgDir(key)); err != nil {
+				fmt.Fprintln(os.Stderr, "pin:", err)
+				rc = 1
+				continue
+			}
+		}
+
+		fmt.Printf("→ %s  (runtime %s, via %s)\n", spec, rtLabel, pm)
+		ne, err := installAndShim(spec, key, pm, nodePath, rtLabel, e)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "pin:", err)
+			rc = 1
+			continue
+		}
+		db[key] = ne
+		if err := saveDB(db); err != nil {
+			fmt.Fprintln(os.Stderr, "pin:", err)
+			return 1
+		}
+		fmt.Printf("  %s %s → %s\n", key, ne.Version, strings.Join(ne.Bins, ", "))
+	}
+	return rc
 }
 
 func parseBins(pkgName string, raw json.RawMessage) map[string]string {

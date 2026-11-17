@@ -13,11 +13,11 @@ import (
 // calls it. Keeping the logic in Go means one implementation for every shell.
 
 var verbs = []string{
-	"add", "a", "ls", "l", "rm", "r", "which", "w", "doctor", "d",
+	"add", "a", "up", "update", "ls", "l", "rm", "r", "which", "w", "doctor", "d",
 	"shims", "s", "completion", "version", "v", "help", "h",
 }
 
-var flags = []string{"-n", "--node", "--runtime", "--install", "--fix"}
+var flags = []string{"-n", "--node", "--runtime", "--install", "--fix", "--pm"}
 
 // shells are the argument values accepted by `pin completion`.
 var shells = []string{"bash", "zsh", "fish", "powershell"}
@@ -117,7 +117,7 @@ func candidates(words []string) []string {
 	}
 
 	switch words[0] {
-	case "r", "rm", "remove", "u", "uninstall", "w", "which":
+	case "r", "rm", "remove", "u", "uninstall", "w", "which", "up", "update":
 		return filterPrefix(pinnedNames(), last)
 	case "d", "doctor":
 		return filterPrefix([]string{"--fix"}, last)

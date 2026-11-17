@@ -228,3 +228,75 @@ func TestRebind(t *testing.T) {
 		t.Errorf("bins changed: %v", saved["ni"].Bins)
 	}
 }
+
+// fakeRuntime lays out a directory findNode accepts, so runtime resolution works
+// without touching the machine's real node installs.
+func fakeRuntime(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, nodeExeName()), []byte("stub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// `pin <pkg>` installs. On an already pinned package it must refuse and point at
+// the commands that do the other two things.
+func TestAddRefusesAlreadyPinned(t *testing.T) {
+	t.Setenv("PIN_HOME", t.TempDir())
+	dir := fakeRuntime(t)
+	if err := saveDB(map[string]Entry{"cowsay": {
+		Spec: "cowsay", Version: "1.6.0", Runtime: "20.20.2",
+		NodePath: filepath.Join(dir, nodeExeName()), Bins: []string{"cowsay"}, PM: "npm",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if code := cli([]string{"-n", dir, "cowsay"}); code != 1 {
+		t.Fatalf("expected refusal, got %d", code)
+	}
+}
+
+// A different runtime is the one case where add is allowed to touch an existing
+// pin: it becomes a re-point.
+func TestAddRepointsWithExplicitRuntime(t *testing.T) {
+	t.Setenv("PIN_HOME", t.TempDir())
+	oldDir := fakeRuntime(t)
+	newDir := fakeRuntime(t)
+	oldNode := filepath.Join(oldDir, nodeExeName())
+	newNode := filepath.Join(newDir, nodeExeName())
+	if err := writeShimFile("cowsay", "node", oldNode, filepath.Join(t.TempDir(), "e.js"), "cowsay", "1.6.0"); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeShim("cowsay"); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveDB(map[string]Entry{"cowsay": {
+		Spec: "cowsay", Version: "1.6.0", Runtime: "20.20.2",
+		NodePath: oldNode, Bins: []string{"cowsay"}, PM: "npm",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if code := cli([]string{"-n", newDir, "cowsay"}); code != 0 {
+		t.Fatalf("re-point failed with %d", code)
+	}
+	sh, err := readShimFile("cowsay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sh.Node != newNode {
+		t.Errorf("shim still points at %s, want %s", sh.Node, newNode)
+	}
+	if saved, _ := loadDB(); saved["cowsay"].NodePath != newNode {
+		t.Errorf("registry not updated: %+v", saved["cowsay"])
+	}
+}
+
+func TestUpdateRejectsUnknownPackage(t *testing.T) {
+	t.Setenv("PIN_HOME", t.TempDir())
+	if err := saveDB(map[string]Entry{}); err != nil {
+		t.Fatal(err)
+	}
+	if code := cli([]string{"up", "nope"}); code != 1 {
+		t.Fatalf("expected 1 for an unknown package, got %d", code)
+	}
+}

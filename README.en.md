@@ -44,6 +44,8 @@ pin -n 20 @antfu/ni           # pin to Node 20 (20, 20.20 and 20.20.2 all work)
 pin -n 20 cowsay@1.6.0        # package version and runtime together
 pin --install -n 18 cowsay    # Node 18 isn't installed; let the manager do it first
 pin --pm pnpm @antfu/ni       # install with pnpm (npm / pnpm / yarn)
+pin up                        # upgrade everything pinned, bindings untouched
+pin up cowsay@1.6.0            # upgrade to a specific version
 pin -n 22 ni                  # already pinned: just re-point it, no reinstall
 pin                           # list pinned tools
 pin w ni                      # show what the ni shim actually executes
@@ -61,10 +63,18 @@ Node runs it, so it takes tens of milliseconds and no network. Packages carrying
 native code (`.node` / `binding.gyp`) are reinstalled instead of re-pointed, since
 that compiled output only fits one node ABI — no flag to remember.
 
-`pin <pkg>` without `-n` upgrades: it resolves newer versions and reinstalls, but
-keeps the runtime the package is already bound to. Only an explicit `-n` (or
-`PIN_NODE`) moves a pin, so the command means the same thing in every shell —
-`pin ni` inside a Node 14 project will not drag ni from 20 down to 14.
+Three verbs, one job each:
+
+| Command | What it does |
+|---|---|
+| `pin <pkg>` | **install only**. An already pinned package is refused with a pointer to the other two |
+| `pin up [<pkg>@<ver>]...` | **upgrade only**. No arguments upgrades everything; bindings do not move |
+| `pin -n <ver> <pkg>` | **re-point only**. No reinstall, no upgrade |
+
+They are separate because `pin cowsay` doing both install and upgrade would mean
+different things depending on whether you had run it before. Only an explicit
+`-n` (or `PIN_NODE`) moves a pin, so a command means the same thing in every
+shell — `pin up ni` inside a Node 14 project will not drag ni from 20 down to 14.
 
 If the first argument isn't a command it's treated as a package name, so `pin add ...` and `pin @antfu/ni` are the same. Full names also work: `add`, `ls`, `rm`, `which`, `doctor`, `shims`.
 
