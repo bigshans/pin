@@ -29,7 +29,7 @@ Windows 下载 `pin-windows-amd64.exe`，改名成 `pin.exe`，放进 `%USERPROF
 ```bash
 git clone git@github.com:bigshans/pin.git
 cd pin
-./build.sh install      # 编译到 ~/.pin/bin/pin，并重链已有的 shim
+./build.sh install      # 编译到 ~/.local/bin/pin（可用 PIN_BIN_DIR 改），并重链已有的 shim
 ```
 
 然后把 `~/.pin/bin`（Windows 是 `%USERPROFILE%\.pin\bin`）加到 PATH 里，位置要在版本管理器之前。之后 `pin` 和所有被钉住的命令都从这个目录来。
@@ -162,7 +162,7 @@ Windows 11，Node 20.20.2，各跑 30 次取均值（先预热）：
 
 ```bash
 ./build.sh          # dist/ 下五个目标 + SHA256SUMS
-./build.sh install  # 只编译本机，直接装进 $PIN_HOME/bin 并重链 shim
+./build.sh install  # 只编译本机，装进 $PIN_BIN_DIR（默认 ~/.local/bin）并重链 shim
 ```
 
 产物约 2.9MB。

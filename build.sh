@@ -9,17 +9,21 @@ LDFLAGS="-s -w -X main.version=$VERSION"
 export CGO_ENABLED=0
 mkdir -p dist
 
-# ./build.sh install  → build for this machine straight into $PIN_HOME/bin and
-# relink every shim to it (shims are hard links, so they must be recreated).
+# ./build.sh install  → build for this machine into $PIN_BIN_DIR (which only has
+# to be on PATH, and on the same filesystem as $PIN_HOME for shims to stay hard
+# links), then relink every shim to it (shims are hard links, so they must be
+# recreated). PIN_BIN_DIR defaults to ~/.local/bin: the binary does not need to
+# live in the shim directory.
 if [ "${1:-}" = "install" ]; then
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*) name=pin.exe ;;
     *) name=pin ;;
   esac
-  mkdir -p "$PIN_HOME/bin"
-  go build -trimpath -ldflags "$LDFLAGS" -o "$PIN_HOME/bin/$name" .
-  echo "installed $PIN_HOME/bin/$name"
-  "$PIN_HOME/bin/$name" s
+  PIN_BIN_DIR="${PIN_BIN_DIR:-$HOME/.local/bin}"
+  mkdir -p "$PIN_BIN_DIR"
+  go build -trimpath -ldflags "$LDFLAGS" -o "$PIN_BIN_DIR/$name" .
+  echo "installed $PIN_BIN_DIR/$name"
+  "$PIN_BIN_DIR/$name" s
   exit 0
 fi
 

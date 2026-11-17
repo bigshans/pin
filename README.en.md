@@ -29,7 +29,7 @@ Building from source needs Go 1.21 or newer and no third-party dependencies:
 ```bash
 git clone git@github.com:bigshans/pin.git
 cd pin
-./build.sh install      # builds into ~/.pin/bin/pin and relinks existing shims
+./build.sh install      # builds into ~/.local/bin/pin (override with PIN_BIN_DIR), relinks shims
 ```
 
 Add `~/.pin/bin` (`%USERPROFILE%\.pin\bin` on Windows) to your PATH, ahead of your version manager. `pin` and every pinned command then come from that one directory.
@@ -179,7 +179,7 @@ The ~13ms difference is one extra process, Go runtime startup, a 200-byte read a
 
 ```bash
 ./build.sh          # five targets into dist/, plus SHA256SUMS
-./build.sh install  # build for this machine into $PIN_HOME/bin and relink shims
+./build.sh install  # build for this machine into $PIN_BIN_DIR (default ~/.local/bin), relink shims
 ```
 
 The binary is about 2.9MB.
