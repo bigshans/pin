@@ -135,13 +135,22 @@ func main() {
 }
 
 // isCLIName reports whether argv[0] means "the CLI" rather than "a shim".
-// Release artifacts are named pin-linux-amd64 and friends, and those should
-// still behave like the CLI.
+// A shim is the same binary under the pinned bin's name, so the name alone is
+// not enough: metadata decides first, then the pin* names fall back to being
+// the CLI (release artifacts such as pin-linux-amd64, dev builds such as
+// pinchk.exe).
 func isCLIName(name string) bool {
-	if name == "pin" {
+	if strings.EqualFold(name, "pin") {
 		return true
 	}
-	return strings.HasPrefix(name, "pin-") || strings.HasPrefix(name, "pin_")
+	// A real shim always has metadata, so a pinned tool called pin-github-action
+	// or pinst wins over the name rule below.
+	if _, err := os.Stat(shimPath(name)); err == nil {
+		return false
+	}
+	// No metadata: a name starting with "pin" is a release artifact
+	// (pin-linux-amd64) or a dev build (pinchk.exe), never an installed tool.
+	return strings.HasPrefix(strings.ToLower(name), "pin")
 }
 
 // runShim is the hot path: one small file read, then exec.
@@ -776,6 +785,12 @@ func cmdAdd(args []string) int {
 
 		names := make([]string, 0, len(bins))
 		for bin, rel := range bins {
+			// "pin" itself is the CLI binary; a shim of that name would shadow or
+			// clobber it, and isCLIName would keep routing it to the CLI anyway.
+			if bin == "pin" {
+				fmt.Fprintf(os.Stderr, "pin: skip bin %q: it collides with the pin CLI\n", bin)
+				continue
+			}
 			entry := filepath.Join(instDir, filepath.FromSlash(rel))
 			kind := kindOf(entry)
 			if _, err := os.Stat(entry); err != nil {
@@ -792,6 +807,10 @@ func cmdAdd(args []string) int {
 			names = append(names, bin)
 		}
 		sort.Strings(names)
+		if len(names) == 0 {
+			fmt.Fprintf(os.Stderr, "pin: %s publishes no usable bin\n", pkgName)
+			return 1
+		}
 
 		prev := db[key]
 		for _, old := range prev.Bins {
