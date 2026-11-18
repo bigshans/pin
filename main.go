@@ -431,16 +431,16 @@ usage:
   pin -n <ver> <pinned>   re-point an existing pin, no reinstall
 
 commands:
-  install                 install & pin: pin install <pkg>[@ver]
-  update                  upgrade pinned packages, keeping their runtime
-  list                    list pinned tools
-  rm                      unpin: rm <pkg|bin>...
-  which                   show what a shim resolves to: pin which <bin>
-  doctor                  verify; --fix re-binds stale shims, drops orphans
-  shims                   relink every shim; same as doctor --fix
+  install (a, i)          install & pin: pin install <pkg>[@ver]
+  update (up)             upgrade pinned packages, keeping their runtime
+  list (l, ls)            list pinned tools
+  rm (r, u)               unpin: rm <pkg|bin>...
+  which (w)               show what a shim resolves to: pin which <bin>
+  doctor (d)              verify; --fix re-binds stale shims, drops orphans
+  shims (s)               relink every shim; same as doctor --fix
   completion              print shell glue: bash | zsh | fish | powershell
-  version                 print version
-  help                    print this
+  version (v)             print version
+  help (h)                print this
 
 env:
   PIN_HOME                install root (default ~/.pin)
