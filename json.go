@@ -103,23 +103,23 @@ func (r *jreader) strEscaped(start int) (string, error) {
 				sb.WriteByte('\t')
 				r.i++
 			case 'u':
-				hi, err := r.hex4() // leaves r.i on the last hex digit
+				hi, err := r.hex4()
 				if err != nil {
 					return "", err
 				}
-				r.i++
 				// A high surrogate is followed by its low half as another \uXXXX.
 				if utf16.IsSurrogate(rune(hi)) && r.i+1 < len(r.b) &&
 					r.b[r.i] == '\\' && r.b[r.i+1] == 'u' {
-					r.i++
+					r.i++ // onto the 'u' of the second escape
 					lo, err := r.hex4()
 					if err != nil {
 						return "", err
 					}
-					r.i++
 					if dec := utf16.DecodeRune(rune(hi), rune(lo)); dec != utf8.RuneError {
 						sb.WriteRune(dec)
 					} else {
+						// Not a pair after all (low then high, say): two replacement
+						// characters, which is what encoding/json produces too.
 						sb.WriteRune(utf8.RuneError)
 						sb.WriteRune(rune(lo))
 					}
@@ -144,8 +144,8 @@ func (r *jreader) hex4() (uint32, error) {
 		return 0, r.errf("truncated \\u escape")
 	}
 	var v uint32
-	for k := 0; k < 4; k++ {
-		c := r.b[r.i+1+k]
+	for k := 1; k <= 4; k++ {
+		c := r.b[r.i+k]
 		v <<= 4
 		switch {
 		case c >= '0' && c <= '9':
@@ -158,7 +158,7 @@ func (r *jreader) hex4() (uint32, error) {
 			return 0, r.errf("bad hex in \\u escape")
 		}
 	}
-	r.i += 4
+	r.i += 5 // the 'u' and its four digits
 	return v, nil
 }
 
@@ -173,7 +173,6 @@ func (r *jreader) word(w string) error {
 // number validates the JSON number grammar without converting: pin reads no
 // numbers, it only has to get past them.
 func (r *jreader) number() error {
-	start := r.i
 	if r.peek('-') {
 		r.i++
 	}
@@ -185,7 +184,13 @@ func (r *jreader) number() error {
 		}
 		return n
 	}
-	if digits() == 0 {
+	// One leading zero, never two: 0 is a number, 00 is a leaky parser.
+	if r.peek('0') {
+		r.i++
+		if r.i < len(r.b) && r.b[r.i] >= '0' && r.b[r.i] <= '9' {
+			return r.errf("number with a leading zero")
+		}
+	} else if digits() == 0 {
 		return r.errf("expected a number")
 	}
 	if r.peek('.') {
@@ -203,7 +208,6 @@ func (r *jreader) number() error {
 			return r.errf("expected digits in exponent")
 		}
 	}
-	_ = start
 	return nil
 }
 
@@ -335,6 +339,7 @@ func (r *jreader) intoStrings(dst *[]string) error {
 	r.skipWS()
 	if r.peek(']') {
 		r.i++
+		*dst = (*dst)[:0]
 		return nil
 	}
 	out := (*dst)[:0]
