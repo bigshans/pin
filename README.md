@@ -37,7 +37,7 @@ Then, once, put the shim directory on PATH **ahead of your version manager**:
 export PATH="$HOME/.pin/bin:$PATH"      # Windows: %USERPROFILE%\.pin\bin
 ```
 
-From source: `./build.sh install` — see [Build](docs/build.md).
+From source: `./build.sh install` (Windows: `build.bat install`) — see [Build](docs/build.md).
 
 Node comes from the version manager you already use (fnm, nvm, mise, asdf,
 proto, vfox, volta); `pin` never downloads Node.

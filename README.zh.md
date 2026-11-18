@@ -33,7 +33,7 @@ chmod +x ~/.local/bin/pin
 export PATH="$HOME/.pin/bin:$PATH"      # Windows: %USERPROFILE%\.pin\bin
 ```
 
-从源码编译：`./build.sh install` —— 见[构建](docs/build.zh.md)。
+从源码编译：`./build.sh install`（Windows 用 `build.bat install`）—— 见[构建](docs/build.zh.md)。
 
 Node 由你已有的版本管理器提供（fnm、nvm、mise、asdf、proto、vfox、volta 都认），`pin` 自己不做下载。
 

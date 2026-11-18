@@ -20,6 +20,28 @@ a new inode and leaves the old one behind, still held by all the shims. That is
 what `./build.sh install` does for you, and what `pin doctor` warns about if you
 build by hand.
 
+### Windows
+
+`build.bat` is the same two commands in plain batch — no PowerShell, no helper
+script, and nothing to do with the execution policy:
+
+```bat
+build.bat install      :: build pin.exe for this machine and relink the shims
+build.bat              :: dist\ with five targets + SHA256SUMS
+```
+
+`install` writes `pin.exe` to `%PIN_BIN_DIR%` (default `%USERPROFILE%\bin`)
+and runs `pin shims`. Two Windows-only extras: it refreshes
+`%USERPROFILE%\.pin\bin\pin.exe` as well — that shim directory sits on PATH, so a
+stale hard link there would keep answering for the old build — and it then
+compares every shim against the new binary byte for byte (`fc /b`), because
+`pin doctor` compares build stamps and two builds of the same version string look
+identical. A hard link needs one volume: keep `%PIN_BIN_DIR%` on the same drive
+as `%PIN_HOME%`, or the shims become copies.
+
+`SHA256SUMS` is written with LF endings and hashed with `certutil`: batch can
+only echo CRLF, and `sha256sum -c` would look for `pin-linux-amd64<CR>`.
+
 ## Cross-compilation
 
 ```bash
