@@ -30,8 +30,8 @@ build.bat install      :: build pin.exe for this machine and relink the shims
 build.bat              :: dist\ with five targets + SHA256SUMS
 ```
 
-`install` writes `pin.exe` to `%PIN_BIN_DIR%` (default `%USERPROFILE%\bin`)
-and runs `pin shims`. Two Windows-only extras: it refreshes
+`install` (or `i`, like pin's own verbs) writes `pin.exe` to `%PIN_BIN_DIR%`
+(default `%USERPROFILE%\bin`) and runs `pin shims`. Two Windows-only extras: it refreshes
 `%USERPROFILE%\.pin\bin\pin.exe` as well — that shim directory sits on PATH, so a
 stale hard link there would keep answering for the old build — and it then
 compares every shim against the new binary byte for byte (`fc /b`), because

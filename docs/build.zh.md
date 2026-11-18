@@ -21,7 +21,7 @@ build.bat install      :: 编译本机的 pin.exe 并重链 shim
 build.bat              :: dist\：五个目标 + SHA256SUMS
 ```
 
-`install` 把 `pin.exe` 写到 `%PIN_BIN_DIR%`（默认 `%USERPROFILE%\bin`），然后跑 `pin shims`。Windows 上多两件事：一是顺手把 `%USERPROFILE%\.pin\bin\pin.exe` 也重新链接一次——这个 shim 目录在 PATH 上，留着旧的硬链接的话，`pin` 会一直报旧版本；二是构建完用 `fc /b` 逐个比对 shim 和新二进制的字节，因为 `pin doctor` 比的是构建戳，同一个版本号构建两次它分辨不出来。硬链接不能跨卷：`%PIN_BIN_DIR%` 要和 `%PIN_HOME%` 在同一个盘，否则 shim 会退化成副本。
+`install`（也可以写成 `i`，跟 pin 自己的动词一样）把 `pin.exe` 写到 `%PIN_BIN_DIR%`（默认 `%USERPROFILE%\bin`），然后跑 `pin shims`。Windows 上多两件事：一是顺手把 `%USERPROFILE%\.pin\bin\pin.exe` 也重新链接一次——这个 shim 目录在 PATH 上，留着旧的硬链接的话，`pin` 会一直报旧版本；二是构建完用 `fc /b` 逐个比对 shim 和新二进制的字节，因为 `pin doctor` 比的是构建戳，同一个版本号构建两次它分辨不出来。硬链接不能跨卷：`%PIN_BIN_DIR%` 要和 `%PIN_HOME%` 在同一个盘，否则 shim 会退化成副本。
 
 `SHA256SUMS` 用 `certutil` 计算、并以 LF 结尾写出：批处理的 `echo` 只会给 CRLF，而 `sha256sum -c` 会去找 `pin-linux-amd64<CR>`。
 

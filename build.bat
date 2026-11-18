@@ -3,6 +3,7 @@ rem Windows counterpart of build.sh - one batch file, no PowerShell, no other
 rem script to call.
 rem
 rem   build.bat install   build pin.exe for this machine and relink the shims
+rem                       (i works too, like pin's own short verbs)
 rem   build.bat           dist\: five targets + SHA256SUMS
 rem
 rem Only plain ASCII here on purpose: a .bat is read with the console codepage,
@@ -25,6 +26,7 @@ set "LDFLAGS=-s -w -X main.version=%VERSION%"
 set "CGO_ENABLED=0"
 
 if /i "%~1"=="install" goto :install
+if /i "%~1"=="i" goto :install
 if not "%~1"=="" goto :usage
 
 rem ---------- cross-compilation ----------
@@ -175,7 +177,7 @@ echo copied %~2 ^(hard link failed^)
 exit /b 0
 
 :usage
-1>&2 echo usage: build.bat [install]
+1>&2 echo usage: build.bat [install^|i]
 1>&2 echo    install  build pin.exe for this machine and relink the shims
 1>&2 echo    (none)   cross-compile: dist\ with five targets and SHA256SUMS
 goto :fail
